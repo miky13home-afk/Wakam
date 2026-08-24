@@ -8,25 +8,21 @@
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f3efe7;color:#2f2a24}
 header{background:#3b3026;color:white;padding:14px 16px;position:sticky;top:0;z-index:2}
 h1{margin:0;font-size:24px}.sub{opacity:.8;font-size:13px}
-main{max-width:1100px;margin:auto;padding:12px}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+main{max-width:1100px;margin:auto;padding:12px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 button{border:0;border-radius:10px;padding:10px 13px;font-weight:700;cursor:pointer;background:#5b4636;color:white}
-button.secondary{background:#d8cec1;color:#33291f}
-button.danger{background:#9a3f36}
-.round{font-size:20px;font-weight:800;margin:8px 0 12px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
+button.secondary{background:#d8cec1;color:#33291f}.button.danger{background:#9a3f36}
+.round{font-size:20px;font-weight:800;margin:8px 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
 .card{background:white;border-radius:16px;padding:14px;box-shadow:0 2px 10px #0001;border-top:7px solid #777}
 .card.red{border-color:#b33a36}.card.yellow{border-color:#d6ad22}.card.purple{border-color:#7b4aa5}.card.blue{border-color:#3f76b5}
 .card h2{margin:0 0 8px}.row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px}
-.val{font-size:20px;font-weight:800}.mini{font-size:12px;color:#6e6257}
-section{border-top:1px solid #eee;margin-top:10px;padding-top:8px}
-.controls{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.controls button{padding:8px;font-size:12px}
+.val{font-size:20px;font-weight:800}.mini{font-size:12px;color:#6e6257}section{border-top:1px solid #eee;margin-top:10px;padding-top:8px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:7px}.controls button{padding:8px;font-size:12px}
 .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eee;font-size:12px;font-weight:700}
 .log{background:#fff;border-radius:12px;padding:10px;margin-top:12px;max-height:220px;overflow:auto;font-size:13px}
 input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 </style>
-<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#3b3026"><meta name="mobile-web-app-capable" content="yes"></head>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#3b3026"><meta name="mobile-web-app-capable" content="yes">
+</head>
 <body>
 <header><h1>WAKAM</h1><div class="sub">Gestion des ressources, population, unités et bâtiments</div></header>
 <main>
@@ -35,8 +31,7 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 <button class="secondary" onclick="saveGame()">💾 Sauvegarder</button>
 <button class="secondary" onclick="resetGame()">↺ Nouvelle partie</button>
 </div>
-<div class="round" id="round"></div>
-<div class="grid" id="players"></div>
+<div class="round" id="round"></div><div class="grid" id="players"></div>
 <div class="log"><b>Historique</b><div id="log"></div></div>
 </main>
 <script>
@@ -50,41 +45,54 @@ const BUILDINGS=[
  ['Écurie',200,200],['Grand archer',300,200],['Port',300,200],
  ['Pont',200,200],['Habitation',200,50],['Canoë',100,0],['Foyer',150,100]
 ];
-let state={round:1,players:TYPES.map(t=>({
- ...t,food:250,wood:0,stone:0,villagers:0,archers:0,cavalry:0,
- workFood:0,workWood:0,workStone:0,buildings:{}
-})),logs:[]};
+let state={round:1,players:TYPES.map(t=>({...t,food:250,wood:0,stone:0,villagers:0,archers:0,cavalry:0,workFood:0,workWood:0,workStone:0,buildings:{}})),logs:[]};
 
 function pop(p){return p.villagers+p.archers+p.cavalry*2}
+function housingCapacity(p){return 10+(p.buildings['Habitation']||0)*10}
 function foodCost(p){return Math.floor(pop(p)/10)*200}
-function setVal(i,key,v){state.players[i][key]=Math.max(0,parseInt(v)||0);render()}
-function adjust(i,key,d){state.players[i][key]=Math.max(0,state.players[i][key]+d);render()}
+
+function setVal(i,key,v){
+ let p=state.players[i], n=Math.max(0,parseInt(v)||0);
+ let others=p.workFood+p.workWood+p.workStone-(p[key]||0);
+ p[key]=Math.min(n,Math.max(0,p.villagers-others)); render();
+}
+function adjust(i,key,d){
+ let p=state.players[i];
+ if(d>0 && p.workFood+p.workWood+p.workStone>=p.villagers){
+   alert('Tous les villageois disponibles travaillent déjà.'); return;
+ }
+ p[key]=Math.max(0,p[key]+d); render();
+}
 function createUnit(i,type){
  let p=state.players[i], cost={villager:[50,0],archer:[50,50],cavalry:[150,50]}[type];
+ let unitPop=type==='cavalry'?2:1;
+ if(pop(p)+unitPop>housingCapacity(p)){
+   alert('Capacité de logement insuffisante ('+housingCapacity(p)+' habitants). Construisez une habitation supplémentaire.'); return;
+ }
  if(p.food<cost[0]||p.wood<cost[1]){alert('Ressources insuffisantes');return}
- p.food-=cost[0];p.wood-=cost[1];p[type==='villager'?'villagers':type==='archer'?'archers':'cavalry']++;
- log(`${p.emoji} ${p.name}: création ${type==='villager'?'villageois':type==='archer'?'archer':'cavalier'}`);
- render();
+ p.food-=cost[0];p.wood-=cost[1];
+ p[type==='villager'?'villagers':type==='archer'?'archers':'cavalry']++;
+ log(p.emoji+' '+p.name+': création '+(type==='villager'?'villageois':type==='archer'?'archer':'cavalier'));render();
 }
 function build(i,n){
- let p=state.players[i], b=BUILDINGS[n], wood=b[1],stone=b[2];
+ let p=state.players[i],b=BUILDINGS[n],wood=b[1],stone=b[2];
  if(p.wood<wood||p.stone<stone){alert('Ressources insuffisantes');return}
  p.wood-=wood;p.stone-=stone;p.buildings[b[0]]=(p.buildings[b[0]]||0)+1;
- log(`${p.emoji} ${p.name}: construction ${b[0]}`);
- render();
+ log(p.emoji+' '+p.name+': construction '+b[0]);render();
 }
 function nextTurn(){
  state.players.forEach(p=>{
    let pf=p.workFood*50,pw=p.workWood*50,ps=p.workStone*50;
    p.food+=pf;p.wood+=pw;p.stone+=ps;
-   let fc=foodCost(p); p.food=Math.max(0,p.food-fc);
-   log(`${p.emoji} ${p.name}: T${state.round} +${pf} nourriture, +${pw} bois, +${ps} pierre, -${fc} nourriture`);
+   let fc=foodCost(p);p.food=Math.max(0,p.food-fc);
+   log(p.emoji+' '+p.name+': T'+state.round+' +'+pf+' nourriture, +'+pw+' bois, +'+ps+' pierre, -'+fc+' nourriture');
  });
- state.round++; render();
+ state.round++;render();
 }
 function log(s){state.logs.unshift(s);state.logs=state.logs.slice(0,80)}
 function saveGame(){localStorage.setItem('wakamSave',JSON.stringify(state));alert('Partie sauvegardée sur cet appareil.')}
 function resetGame(){if(confirm('Commencer une nouvelle partie ?')){state={round:1,players:TYPES.map(t=>({...t,food:250,wood:0,stone:0,villagers:0,archers:0,cavalry:0,workFood:0,workWood:0,workStone:0,buildings:{}})),logs:[]};render()}}
+
 function render(){
  document.getElementById('round').textContent='TOUR '+state.round;
  document.getElementById('players').innerHTML=state.players.map((p,i)=>`
@@ -99,6 +107,7 @@ function render(){
  <div class="row"><span>Archers</span><span>${p.archers}</span></div>
  <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}</span></div>
  <div class="row"><b>Population effective</b><b>${pop(p)}</b></div>
+ <div class="row"><span>🏠 Capacité de logement</span><b>${housingCapacity(p)}</b></div>
  <div class="row"><span>🍽️ Entretien / tour</span><b>${foodCost(p)} nourriture</b></div>
  <div class="controls">
  <button onclick="createUnit(${i},'villager')">+ Villageois<br><small>50 🌽</small></button>
@@ -110,7 +119,7 @@ function render(){
  <div class="row"><span>${l}</span><span><button class="secondary" onclick="adjust(${i},'${k}',-1)">−</button>
  <input value="${p[k]}" onchange="setVal(${i},'${k}',this.value)">
  <button onclick="adjust(${i},'${k}',1)">+</button> <span class="mini">(+${p[k]*50}/tour)</span></span></div>`).join('')}
- <div class="mini">Maximum conseillé : nombre de villageois disponibles.</div>
+ <div class="mini">Maximum : ${p.villagers} villageois disponibles — total affecté : ${p.workFood+p.workWood+p.workStone}.</div>
  </section>
  <section><b>🏗️ Construire</b>
  <div class="controls">${BUILDINGS.map((b,n)=>`<button onclick="build(${i},${n})">${b[0]}<br><small>${b[1]} 🪵 + ${b[2]} 🪨</small></button>`).join('')}</div>
@@ -119,13 +128,11 @@ function render(){
  </div>`).join('');
  document.getElementById('log').innerHTML=state.logs.map(x=>`<div>${x}</div>`).join('');
 }
-let saved=localStorage.getItem('wakamSave'); if(saved){try{state=JSON.parse(saved)}catch(e){}}
+let saved=localStorage.getItem('wakamSave');if(saved){try{state=JSON.parse(saved)}catch(e){}}
 render();
 </script>
 <script>
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
-}
+if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js"))}
 </script>
 </body>
 </html>
