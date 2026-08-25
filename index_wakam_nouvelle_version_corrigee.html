@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wakam — Compteur de partie</title>
+<style>
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f3efe7;color:#2f2a24}
+header{background:#3b3026;color:white;padding:14px 16px;position:sticky;top:0;z-index:2}
+h1{margin:0;font-size:24px}.sub{opacity:.8;font-size:13px}
+main{max-width:1100px;margin:auto;padding:12px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button{border:0;border-radius:10px;padding:10px 13px;font-weight:700;cursor:pointer;background:#5b4636;color:white}
+button.secondary{background:#d8cec1;color:#33291f}.danger{background:#9a3f36!important}
+.round{font-size:20px;font-weight:800;margin:8px 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
+.card{background:white;border-radius:16px;padding:14px;box-shadow:0 2px 10px #0001;border-top:7px solid #777}
+.card.red{border-color:#b33a36}.card.yellow{border-color:#d6ad22}.card.purple{border-color:#7b4aa5}.card.blue{border-color:#3f76b5}
+.card h2{margin:0 0 8px}.row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px}
+.val{font-size:20px;font-weight:800}.mini{font-size:12px;color:#6e6257}
+section{border-top:1px solid #eee;margin-top:10px;padding-top:8px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:7px}.controls button{padding:8px;font-size:12px}
+.unitControls{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eee;font-size:12px;font-weight:700}
+.alert{background:#fff3cd;border:1px solid #e2bf5d;border-radius:10px;padding:8px;margin:8px 0;font-size:13px;font-weight:700}
+.win{background:#dff2df;border:1px solid #6ca66c;border-radius:10px;padding:10px;margin:8px 0;font-weight:800}
+.log{background:#fff;border-radius:12px;padding:10px;margin-top:12px;max-height:220px;overflow:auto;font-size:13px}
+input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
+.overlay{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
+.setup{background:white;border-radius:18px;padding:20px;max-width:520px;width:100%;box-shadow:0 8px 30px #0004}
+.setup h2{margin-top:0}.choiceGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.choice{background:#eee;color:#33291f}.choice.selected{background:#5b4636;color:white}
+.hidden{display:none!important}
+</style>
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#3b3026"><meta name="mobile-web-app-capable" content="yes">
+</head>
+<body>
+<header><h1>WAKAM</h1><div class="sub">Gestion des ressources, population, unités et bâtiments</div></header>
+<main>
+<div class="toolbar">
+<button onclick="nextTurn()">➡️ Tour suivant</button>
+<button class="secondary" onclick="saveGame()">💾 Sauvegarder</button>
+<button class="secondary" onclick="resetGame()">↺ Nouvelle partie</button>
+</div>
+<div class="round" id="round"></div>
+<div class="grid" id="players"></div>
+<div class="log"><b>Historique</b><div id="log"></div></div>
+</main>
+
+<div class="overlay" id="setupOverlay">
+<div class="setup">
+<h2>Nouvelle partie WAKAM</h2>
+<div>Choisissez le nombre de joueurs :</div>
+<div class="choiceGrid">
+<button class="choice" data-count="2" onclick="selectPlayerCount(2)">2 joueurs</button>
+<button class="choice" data-count="3" onclick="selectPlayerCount(3)">3 joueurs</button>
+<button class="choice" data-count="4" onclick="selectPlayerCount(4)">4 joueurs</button>
+</div>
+<div id="tribeChoices" class="choiceGrid"></div>
+<button onclick="startGame()" id="startBtn" disabled>Commencer la partie</button>
+</div>
+</div>
+
+<script>
+const TYPES=[
+ {key:'red',name:'Iroquois',emoji:'🔴'},
+ {key:'yellow',name:'Cheyennes',emoji:'🟡'},
+ {key:'purple',name:'Lakota',emoji:'🟣'},
+ {key:'blue',name:'Cherokee',emoji:'🔵'}
+];
+
+const BUILDINGS=[
+ ['Écurie',200,200],['Grand archer',300,200],['Port',300,200],
+ ['Pont',200,200],['Habitation',200,50],['Foyer',150,100]
+];
+
+const UNIT_COSTS={
+ villager:[50,0], archer:[50,50], cavalry:[150,50], canoe:[0,100]
+};
+
+let selectedCount=0, selectedTribes=[];
+let state={round:1,players:[],logs:[]};
+
+function freshPlayer(t){
+ return {...t,food:250,wood:0,stone:0,
+  chief:1,villagers:0,archers:0,cavalry:0,canoes:0,
+  workFood:0,workWood:0,workStone:0,
+  buildings:{Foyer:1},defeated:false};
+}
+
+function pop(p){return p.chief+p.villagers+p.archers+p.cavalry*2}
+function housingCapacity(p){return 10+(p.buildings['Habitation']||0)*10}
+function requiredHouses(p){return Math.max(0,Math.ceil(pop(p)/10)-1)}
+function foodCost(p){return Math.floor(pop(p)/10)*200}
+function canoeIncome(p){return p.canoes*50}
+function activePlayers(){return state.players.filter(p=>!p.defeated)}
+
+function selectPlayerCount(n){
+ selectedCount=n;
+ selectedTribes=[];
+ document.querySelectorAll('[data-count]').forEach(b=>b.classList.toggle('selected',+b.dataset.count===n));
+ const box=document.getElementById('tribeChoices');
+ box.innerHTML=TYPES.map(t=>`<button class="choice" id="tribe_${t.key}" onclick="toggleTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('');
+ updateSetup();
+}
+
+function toggleTribe(key){
+ if(selectedTribes.includes(key)) selectedTribes=selectedTribes.filter(x=>x!==key);
+ else if(selectedTribes.length<selectedCount) selectedTribes.push(key);
+ updateSetup();
+}
+
+function updateSetup(){
+ TYPES.forEach(t=>{
+  const b=document.getElementById('tribe_'+t.key);
+  if(b)b.classList.toggle('selected',selectedTribes.includes(t.key));
+ });
+ const start=document.getElementById('startBtn');
+ start.disabled=!(selectedCount>=2 && selectedTribes.length===selectedCount);
+}
+
+function startGame(){
+ if(selectedTribes.length!==selectedCount)return;
+ state={round:1,players:TYPES.filter(t=>selectedTribes.includes(t.key)).map(freshPlayer),logs:[]};
+ document.getElementById('setupOverlay').classList.add('hidden');
+ log('Nouvelle partie : '+selectedCount+' joueurs.');
+ render();
+}
+
+function setVal(i,key,v){
+ let p=state.players[i], n=Math.max(0,parseInt(v)||0);
+ let others=p.workFood+p.workWood+p.workStone-(p[key]||0);
+ p[key]=Math.min(n,Math.max(0,p.villagers-others)); render();
+}
+
+function adjust(i,key,d){
+ let p=state.players[i];
+ if(d>0 && p.workFood+p.workWood+p.workStone>=p.villagers){
+  alert('Tous les villageois disponibles travaillent déjà.'); return;
+ }
+ if(d<0 && p[key]<=0)return;
+ p[key]=Math.max(0,p[key]+d); render();
+}
+
+function createUnit(i,type){
+ let p=state.players[i];
+ if(type==='chief'){
+  alert('Chaque tribu commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');return;
+ }
+ const cost=UNIT_COSTS[type];
+ const unitPop=type==='cavalry'?2:(type==='canoe'?0:1);
+ if(type!=='canoe' && pop(p)+unitPop>housingCapacity(p)){
+  alert('Capacité de logement insuffisante ('+housingCapacity(p)+' habitants). Construisez une habitation supplémentaire.');return;
+ }
+ if(p.food<cost[0]||p.wood<cost[1]){alert('Ressources insuffisantes');return}
+ p.food-=cost[0];p.wood-=cost[1];
+ if(type==='villager')p.villagers++;
+ if(type==='archer')p.archers++;
+ if(type==='cavalry')p.cavalry++;
+ if(type==='canoe')p.canoes++;
+ log(p.emoji+' '+p.name+': création '+labelUnit(type));render();
+}
+
+function labelUnit(type){
+ return type==='villager'?'villageois':type==='archer'?'archer':type==='cavalry'?'cavalier':'canoë';
+}
+
+function killUnit(i,type){
+ let p=state.players[i];
+ if(type==='chief'){
+  if(!p.chief)return;
+  p.chief=0;
+  p.defeated=true;
+  log('☠️ '+p.name+': le chef est mort. Tribu éliminée.');
+  checkVictory();
+  render();return;
+ }
+ const key=type==='villager'?'villagers':type==='archer'?'archers':type==='cavalry'?'cavalry':'canoes';
+ if(p[key]<=0)return;
+ p[key]--;
+ if(type==='villager'){
+  const total=p.workFood+p.workWood+p.workStone;
+  if(total>p.villagers){
+   let over=total-p.villagers;
+   for(const k of ['workFood','workWood','workStone']){
+    const take=Math.min(p[k],over);p[k]-=take;over-=take;
+   }
+  }
+ }
+ log('☠️ '+p.name+': perte de '+labelUnit(type)+'.');checkVictory();render();
+}
+
+function build(i,n){
+ let p=state.players[i],b=BUILDINGS[n],wood=b[1],stone=b[2];
+ if(p.wood<wood||p.stone<stone){alert('Ressources insuffisantes');return}
+ p.wood-=wood;p.stone-=stone;p.buildings[b[0]]=(p.buildings[b[0]]||0)+1;
+ log(p.emoji+' '+p.name+': construction '+b[0]);render();
+}
+
+function destroyBuilding(i,name){
+ let p=state.players[i];
+ if(!(p.buildings[name]>0))return;
+ p.buildings[name]--;
+ log('💥 '+p.name+': destruction de '+name+'.');
+ if(name==='Habitation' && pop(p)>housingCapacity(p)){
+  alert('Attention : la population dépasse maintenant la capacité de logement.');
+ }
+ checkVictory();render();
+}
+
+function nextTurn(){
+ if(activePlayers().length<=1){alert('La partie est terminée.');return}
+ state.players.forEach(p=>{
+  if(p.defeated)return;
+  const pf=p.workFood*50,pw=p.workWood*50,ps=p.workStone*50,pc=canoeIncome(p);
+  p.food+=pf+pc;p.wood+=pw;p.stone+=ps;
+  const fc=foodCost(p);p.food=Math.max(0,p.food-fc);
+  log(p.emoji+' '+p.name+': T'+state.round+' +'+pf+' nourriture, +'+pc+' canoës, +'+pw+' bois, +'+ps+' pierre, -'+fc+' nourriture');
+ });
+ state.round++;checkVictory();render();
+}
+
+function checkVictory(){
+ const alive=activePlayers();
+ if(alive.length===1){
+  state.logs.unshift('🏆 Victoire de '+alive[0].emoji+' '+alive[0].name+' !');
+ }else if(alive.length===0){
+  state.logs.unshift('🏆 Tous les joueurs sont éliminés.');
+ }
+}
+
+function log(s){state.logs.unshift(s);state.logs=state.logs.slice(0,100)}
+function saveGame(){localStorage.setItem('wakamSave',JSON.stringify(state));alert('Partie sauvegardée sur cet appareil.')}
+
+function resetGame(){
+ if(confirm('Commencer une nouvelle partie ?')){
+  state={round:1,players:[],logs:[]};
+  selectedCount=0;selectedTribes=[];
+  document.getElementById('setupOverlay').classList.remove('hidden');
+  document.getElementById('tribeChoices').innerHTML='';
+  document.getElementById('startBtn').disabled=true;
+  document.querySelectorAll('[data-count]').forEach(b=>b.classList.remove('selected'));
+  render();
+ }
+}
+
+function render(){
+ document.getElementById('round').textContent=state.players.length?'TOUR '+state.round:'';
+ document.getElementById('players').innerHTML=state.players.map((p,i)=>{
+  const req=requiredHouses(p), missing=Math.max(0,req-(p.buildings['Habitation']||0));
+  const over=pop(p)>housingCapacity(p);
+  return `<div class="card ${p.key}" style="${p.defeated?'opacity:.55':''}">
+  <h2>${p.emoji} ${p.name} ${p.defeated?'— ÉLIMINÉE':''}</h2>
+  ${p.defeated?'<div class="win">☠️ Chef mort ou tous les foyers détruits.</div>':''}
+  <div class="row"><span>🌽 Nourriture</span><span class="val">${p.food}</span></div>
+  <div class="row"><span>🪵 Bois</span><span class="val">${p.wood}</span></div>
+  <div class="row"><span>🪨 Pierre</span><span class="val">${p.stone}</span></div>
+  <div class="row"><span>Ressources totales</span><span class="badge">${p.food+p.wood+p.stone}</span></div>
+
+  <section><b>👥 Population & unités</b>
+  <div class="row"><span>👑 Chef</span><span>${p.chief}</span></div>
+  <div class="row"><span>Villageois</span><span>${p.villagers}</span></div>
+  <div class="row"><span>Archers</span><span>${p.archers}</span></div>
+  <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}</span></div>
+  <div class="row"><span>🛶 Canoës</span><span>${p.canoes}</span></div>
+  <div class="row"><b>Population effective</b><b>${pop(p)}</b></div>
+  <div class="row"><span>🏠 Capacité de logement</span><b>${housingCapacity(p)}</b></div>
+  <div class="row"><span>🍽️ Entretien / tour</span><b>${foodCost(p)} nourriture</b></div>
+  <div class="row"><span>🛶 Production des canoës</span><b>+${canoeIncome(p)} nourriture/tour</b></div>
+  ${missing>0?`<div class="alert">🏠 ${missing} habitation(s) obligatoire(s) pour cette population.</div>`:''}
+  ${over?`<div class="alert">⚠️ Population supérieure à la capacité de logement.</div>`:''}
+  <div class="unitControls">
+   <button onclick="createUnit(${i},'villager')">+ Villageois<br><small>50 🌽</small></button>
+   <button onclick="createUnit(${i},'archer')">+ Archer<br><small>50 🌽 + 50 🪵</small></button>
+   <button onclick="createUnit(${i},'cavalry')">+ Cavalier<br><small>150 🌽 + 50 🪵</small></button>
+   <button onclick="createUnit(${i},'canoe')">+ Canoë<br><small>100 🪵</small></button>
+  </div>
+  <div class="mini">Le chef est unique et compte pour 1. Les canoës ne comptent pas dans la population.</div>
+  <div class="controls" style="margin-top:7px">
+   <button class="danger" onclick="killUnit(${i},'villager')">− Villageois</button>
+   <button class="danger" onclick="killUnit(${i},'archer')">− Archer</button>
+   <button class="danger" onclick="killUnit(${i},'cavalry')">− Cavalier</button>
+   <button class="danger" onclick="killUnit(${i},'canoe')">− Canoë</button>
+   <button class="danger" onclick="killUnit(${i},'chief')">☠️ Chef meurt</button>
+  </div>
+  </section>
+
+  <section><b>⛏️ Villageois au travail</b>
+  ${[['workFood','🌽 Nourriture'],['workWood','🪵 Bois'],['workStone','🪨 Pierre']].map(([k,l])=>`
+  <div class="row"><span>${l}</span><span><button class="secondary" onclick="adjust(${i},'${k}',-1)">−</button>
+  <input value="${p[k]}" onchange="setVal(${i},'${k}',this.value)">
+  <button onclick="adjust(${i},'${k}',1)">+</button> <span class="mini">(+${p[k]*50}/tour)</span></span></div>`).join('')}
+  <div class="mini">Maximum : ${p.villagers} villageois disponibles — total affecté : ${p.workFood+p.workWood+p.workStone}.</div>
+  </section>
+
+  <section><b>🏗️ Construire</b>
+  <div class="controls">${BUILDINGS.map((b,n)=>`<button onclick="build(${i},${n})">${b[0]}<br><small>${b[1]} 🪵 + ${b[2]} 🪨</small></button>`).join('')}</div>
+  <div class="mini">Bâtiments : ${Object.entries(p.buildings).map(([k,v])=>k+' ×'+v).join(', ')||'aucun'}</div>
+  <div class="controls" style="margin-top:7px">${Object.entries(p.buildings).filter(([,v])=>v>0).map(([k])=>`<button class="danger" onclick="destroyBuilding(${i},'${k}')">− Détruire ${k}</button>`).join('')}</div>
+  </section>
+  </div>`;
+ }).join('');
+ document.getElementById('log').innerHTML=state.logs.map(x=>`<div>${x}</div>`).join('');
+}
+
+let saved=localStorage.getItem('wakamSave');
+if(saved){
+ try{
+  const old=JSON.parse(saved);
+  if(old && old.players && old.players.length){
+   old.players=old.players.map(p=>({
+    ...freshPlayer(TYPES.find(t=>t.key===p.key)||TYPES[0]),
+    ...p,
+    chief:typeof p.chief==='number'?p.chief:1,
+    canoes:typeof p.canoes==='number'?p.canoes:0,
+    buildings:p.buildings||{Foyer:1}
+   }));
+   state=old;
+   document.getElementById('setupOverlay').classList.add('hidden');
+  }
+ }catch(e){}
+}
+render();
+</script>
+<script>
+if("serviceWorker"in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js"))}
+</script>
+</body>
+</html>
