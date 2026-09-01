@@ -101,11 +101,6 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 <button onclick="prepareJoinShared()">Rechercher la partie</button>
 </div>
 <div id="sharedSetupDetails"></div>
- <div class="sharedBox" id="resumeSharedBox" style="display:none">
-  <b>↩️ Reprendre ma dernière partie partagée</b>
-  <div class="mini" id="resumeSharedText"></div>
-  <button onclick="resumeSharedGame()" style="margin-top:8px">Reprendre la partie</button>
- </div>
 </div>
 </div>
 </div>
@@ -535,26 +530,34 @@ function applyTurnProduction(){
  });
 }
 
-let turnProcessing=false;
-
 function nextTurn(){
-  if(turnProcessing)return;
-  if(activePlayers().length<=1){alert('La partie est terminée.');return;}
-  turnProcessing=true;
-  try{
-    applyTurnProduction();
-    state.round++;
-    if(state.currentEventRound!==state.round){state.currentEvent=null;state.currentEventRound=null;}
-    if(state.round>=state.nextForestExhaustionRound)triggerExhaustion('forest');
-    if(state.round>=state.nextQuarryExhaustionRound)triggerExhaustion('quarry');
-    checkVictory();
-    render();
-    if(!sharedMode)localStorage.setItem('wakamSave',JSON.stringify(state));
-  }catch(e){
-    console.error('Erreur pendant le changement de tour :',e);
-    alert('Une erreur a empêché le changement de tour. La partie a été conservée.');
-  }finally{turnProcessing=false;}
+ if(activePlayers().length<=1){
+  alert('La partie est terminée.');
+  return;
+ }
+
+ applyTurnProduction();
+
+ state.round++;
+
+ // Un événement d'épuisement n'est visible que pendant le tour où il est déclenché.
+ // Au passage au tour suivant, on l'efface avant de vérifier les nouveaux épuisements.
+ if(state.currentEventRound!==state.round){
+  state.currentEvent=null;
+  state.currentEventRound=null;
+ }
+
+ if(state.round>=state.nextForestExhaustionRound){
+  triggerExhaustion('forest');
+ }
+ if(state.round>=state.nextQuarryExhaustionRound){
+  triggerExhaustion('quarry');
+ }
+
+ checkVictory();
+ render();
 }
+
 function checkVictory(){
  const alive=activePlayers();
  if(alive.length===1){
@@ -834,7 +837,7 @@ let ephemeralTimer=null;
 let pendingSharedCount=0;
 let pendingSharedTribes=[];
 
-onAuthStateChanged(auth,u=>{uid=u?.uid||null;if(uid)showResumeSharedOption();});
+onAuthStateChanged(auth,u=>{uid=u?.uid||null;});
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
 
 const originalRender=window.render;
@@ -847,7 +850,7 @@ window.selectMode=function(m){
  document.getElementById('sharedModeBtn').classList.toggle('selected',m==='shared');
  document.getElementById('soloSetup').classList.toggle('hidden',m!=='solo');
  document.getElementById('sharedSetup').classList.toggle('hidden',m!=='shared');
- if(m==='shared'){document.getElementById('sharedSetupDetails').innerHTML='';showResumeSharedOption();}
+ if(m==='shared')document.getElementById('sharedSetupDetails').innerHTML='';
 };
 
 window.showSharedCreate=function(){
@@ -926,26 +929,6 @@ window.claimMaster=async function(key){
  await enterShared(code,key,true);
 };
 
-window.resumeSharedGame=async function(){
-  try{
-    if(!uid){alert('Firebase n’est pas encore connecté. Attends quelques secondes.');return;}
-    const raw=localStorage.getItem('wakamSharedSession');
-    if(!raw){alert('Aucune partie partagée enregistrée sur cet appareil.');return;}
-    const session=JSON.parse(raw);
-    const snap=await getDoc(doc(db,'games',session.gameId));
-    if(!snap.exists()){localStorage.removeItem('wakamSharedSession');alert('Cette partie partagée n’existe plus.');return;}
-    const member=await getDoc(doc(db,'games',session.gameId,'members',uid));
-    if(!member.exists()){localStorage.removeItem('wakamSharedSession');alert('Cet appareil n’est plus enregistré dans cette partie.');return;}
-    await enterShared(session.gameId,session.playerKey,session.isMaster);
-  }catch(e){console.error(e);alert('Impossible de reprendre la partie pour le moment.');}
-};
-
-function showResumeSharedOption(){
-  const box=document.getElementById('resumeSharedBox'), text=document.getElementById('resumeSharedText');
-  if(!box||!text)return;
-  try{const raw=localStorage.getItem('wakamSharedSession'); if(!raw){box.style.display='none';return;} const session=JSON.parse(raw); text.textContent='Partie : '+session.gameId+' · '+(session.isMaster?'Maître du jeu':'Joueur'); box.style.display='block';}catch(e){box.style.display='none';}
-}
-
 window.prepareJoinShared=async function(){
  const code=(document.getElementById('joinCodeInput').value||'').trim().toUpperCase();
  if(code.length!==6){alert('Le code doit contenir 6 caractères.');return;}
@@ -976,7 +959,6 @@ window.joinShared=async function(code,key){
 
 async function enterShared(code,key,isMaster){
  sharedMode=true;sharedMaster=isMaster;sharedGameId=code;sharedPlayerKey=key;
-  localStorage.setItem('wakamSharedSession',JSON.stringify({gameId:code,playerKey:key,isMaster:!!isMaster}));
  document.getElementById('setupOverlay').classList.add('hidden');
  document.getElementById('leaveSharedBtn').classList.remove('hidden');
  subscribeShared();
@@ -1111,19 +1093,16 @@ function wrapMutation(name){
 window.nextTurn=function(){
  if(sharedMode){
   if(!sharedMaster){alert('Seul le maître du jeu peut passer au tour suivant.');return;}
-  if(turnProcessing)return;
   const before=snapshotPlayers();
-  originalNextTurn();
-  syncShared(before).catch(e=>{console.error('Erreur de synchronisation du tour :',e);alert('Le tour a changé sur cet appareil, mais Firebase n’a pas pu synchroniser. Vérifie la connexion.');});
-  return;
+  const result=originalNextTurn();
+  syncShared(before).catch(e=>console.error(e));
+  return result;
  }
  return originalNextTurn();
 };
 
 window.saveGame=function(){
- if(sharedMode){alert('La partie partagée est sauvegardée automatiquement dans Firebase.
-
-Code : '+sharedGameId);return;}
+ if(sharedMode){alert('La partie partagée est sauvegardée automatiquement dans Firebase.');return;}
  return originalSaveGame();
 };
 
@@ -1136,7 +1115,6 @@ window.leaveSharedGame=async function(){
  if(!confirm('Quitter cette partie sur cet appareil ?'))return;
  if(sharedUnsub)sharedUnsub();
  sharedUnsub=null;sharedMode=false;sharedMaster=false;sharedGameId=null;sharedPlayerKey=null;seen.clear();
-  localStorage.removeItem('wakamSharedSession');
  document.getElementById('leaveSharedBtn').classList.add('hidden');
  document.getElementById('setupOverlay').classList.remove('hidden');
  window.selectMode('solo');
