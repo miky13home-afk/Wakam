@@ -43,7 +43,12 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 .role{display:inline-block;padding:4px 8px;border-radius:999px;background:#e5dfd6;font-size:12px;font-weight:800}
 .role.master{background:#f5df73;color:#5d4700}
 .noticeCenter{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;pointer-events:none;width:min(90vw,520px)}
-.ephemeral{background:#3b3026;color:white;border-radius:16px;padding:18px 22px;box-shadow:0 8px 35px #0006;text-align:center;font-size:20px;font-weight:900}
+.ephemeral{background:#3b3026;color:white;border-radius:16px;padding:18px 22px;box-shadow:0 8px 35px #0006;text-align:center;font-size:20px;font-weight:900;animation:popIn .22s ease-out}
+@keyframes popIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
+.victoryOverlay{position:fixed;inset:0;background:#000b;display:flex;align-items:center;justify-content:center;z-index:60;padding:20px}
+.victoryCard{background:white;border-radius:22px;padding:28px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 45px #0008}
+.victoryCard h2{font-size:32px;margin:0 0 10px}.victoryTribe{font-size:26px;font-weight:900;margin:14px 0}
+.playerOnlyNote{background:#f6f0e8;border-radius:10px;padding:8px;margin:8px 0;font-size:12px;font-weight:700}
 </style>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#3b3026">
@@ -64,6 +69,7 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 <div class="grid" id="players"></div>
 <div class="log"><b>Historique</b><div id="log"></div></div>
 <div id="ephemeralLayer" class="noticeCenter"></div>
+<div id="victoryOverlay" class="victoryOverlay hidden"></div>
 </main>
 
 <div class="overlay" id="setupOverlay">
@@ -154,6 +160,7 @@ let state={
  nextForestExhaustionRound:randomFirstExhaustion(),
  nextQuarryExhaustionRound:randomFirstExhaustion(),
  currentEvent:null,
+  currentEventRound:null,
  players:[],
  logs:[]
 };
@@ -171,7 +178,7 @@ function freshPlayer(t){
   chief:1,villagers:0,archers:0,cavalry:0,canoes:0,
   workFood:0,workWood:0,workStone:0,
   buildings:{Foyer:1},
-  upgrades:{archer:false,cavalry:false},
+  upgrades:{archer:false,cavalry:false,archerElite:false,cavalryArcher:false},
   defeated:false
  };
 }
@@ -243,6 +250,7 @@ function startGame(){
   nextForestExhaustionRound:randomFirstExhaustion(),
   nextQuarryExhaustionRound:randomFirstExhaustion(),
   currentEvent:null,
+  currentEventRound:null,
   players:TYPES.filter(t=>selectedTribes.includes(t.key)).map(freshPlayer),
   logs:[]
  };
@@ -423,35 +431,49 @@ function convertStone(i){
 
 function upgradeArcher(i){
  const p=state.players[i];
-
  if(p.upgrades.archer)return;
-
  if(p.gold<100){
   alert('Il faut 100 or pour améliorer les archers.');
   return;
  }
-
  p.gold-=100;
  p.upgrades.archer=true;
-
  log(`${p.emoji} ${p.name}: archers améliorés — déplacement 2 tuiles`);
+ render();
+}
+
+function upgradeArcherElite(i){
+ const p=state.players[i];
+ if(!p.upgrades.archer){alert('Il faut d’abord améliorer les archers.');return;}
+ if(p.upgrades.archerElite)return;
+ if(p.gold<200){alert('Il faut 200 or pour les archers d’élite.');return;}
+ p.gold-=200;
+ p.upgrades.archerElite=true;
+ log(`${p.emoji} ${p.name}: archers d’élite — portée d’attaque 3 tuiles`);
  render();
 }
 
 function upgradeCavalry(i){
  const p=state.players[i];
-
  if(p.upgrades.cavalry)return;
-
  if(p.gold<200){
   alert('Il faut 200 or pour améliorer les cavaliers.');
   return;
  }
-
  p.gold-=200;
  p.upgrades.cavalry=true;
-
  log(`${p.emoji} ${p.name}: cavaliers améliorés — déplacement 3 tuiles`);
+ render();
+}
+
+function upgradeCavalryArcher(i){
+ const p=state.players[i];
+ if(!p.upgrades.cavalry){alert('Il faut d’abord améliorer les cavaliers.');return;}
+ if(p.upgrades.cavalryArcher)return;
+ if(p.gold<300){alert('Il faut 300 or pour les cavaliers archers.');return;}
+ p.gold-=300;
+ p.upgrades.cavalryArcher=true;
+ log(`${p.emoji} ${p.name}: cavaliers archers — attaque à distance 2 tuiles`);
  render();
 }
 
@@ -463,6 +485,8 @@ function triggerExhaustion(type){
    : '🌲 ÉPUISEMENT DES FORÊTS : aucune forêt n’est actuellement exploitée. Les nouvelles forêts découvertes restent exploitables.';
   log('⚠️ '+msg);
   state.currentEvent=msg;
+  state.currentEventRound=state.round;
+  showEphemeral(msg,6500);
   scheduleNextExhaustion('forest');
  }else{
   const active=state.players.some(p=>!p.defeated && p.workStone>0);
@@ -471,6 +495,8 @@ function triggerExhaustion(type){
    : '⛰️ ÉPUISEMENT DES CARRIÈRES : aucune carrière n’est actuellement exploitée. Les nouvelles montagnes découvertes restent exploitables.';
   log('⚠️ '+msg);
   state.currentEvent=msg;
+  state.currentEventRound=state.round;
+  showEphemeral(msg,6500);
   scheduleNextExhaustion('quarry');
  }
 }
@@ -527,19 +553,36 @@ function nextTurn(){
 
 function checkVictory(){
  const alive=activePlayers();
-
  if(alive.length===1){
   const winner=alive[0];
-  const already=state.logs[0]===('🏆 Victoire de '+winner.emoji+' '+winner.name+' !');
+  const victoryText='🏆 Victoire de '+winner.emoji+' '+winner.name+' !';
+  const already=state.logs.includes(victoryText);
   if(!already){
-   state.logs.unshift('🏆 Victoire de '+winner.emoji+' '+winner.name+' !');
+   state.logs.unshift(victoryText);
+   showEphemeral(victoryText,7000);
+   showVictoryScreen(winner);
   }
  }else if(alive.length===0){
-  if(state.logs[0]!=='🏆 Tous les joueurs sont éliminés.'){
-   state.logs.unshift('🏆 Tous les joueurs sont éliminés.');
+  const victoryText='🏆 Tous les joueurs sont éliminés.';
+  if(!state.logs.includes(victoryText)){
+   state.logs.unshift(victoryText);
+   showEphemeral(victoryText,7000);
+   showVictoryScreen(null);
   }
  }
 }
+
+function showVictoryScreen(winner){
+ const box=document.getElementById('victoryOverlay');
+ if(!box)return;
+ if(winner){
+  box.innerHTML=`<div class="victoryCard"><h2>🏆 VICTOIRE !</h2><div class="victoryTribe">${winner.emoji} ${winner.name}</div><p>La dernière tribu encore en lice remporte la partie.</p><button onclick="closeVictoryScreen()">Continuer à consulter la partie</button></div>`;
+ }else{
+  box.innerHTML=`<div class="victoryCard"><h2>🏆 FIN DE PARTIE</h2><div class="victoryTribe">Toutes les tribus sont éliminées.</div><button onclick="closeVictoryScreen()">Continuer à consulter la partie</button></div>`;
+ }
+ box.classList.remove('hidden');
+}
+function closeVictoryScreen(){document.getElementById('victoryOverlay')?.classList.add('hidden');}
 
 function log(s){
  state.logs.unshift(s);
@@ -559,6 +602,7 @@ function resetGame(){
   nextForestExhaustionRound:randomFirstExhaustion(),
   nextQuarryExhaustionRound:randomFirstExhaustion(),
   currentEvent:null,
+  currentEventRound:null,
   players:[],
   logs:[]
  };
@@ -580,6 +624,7 @@ function normalizeLoadedState(){
    nextForestExhaustionRound:randomFirstExhaustion(),
    legacyLastExhaustionType:null,
    currentEvent:null,
+   currentEventRound:null,
    players:[],
    logs:[]
   };
@@ -588,9 +633,11 @@ function normalizeLoadedState(){
 
  state.players.forEach(p=>{
   if(typeof p.gold!=='number')p.gold=0;
-  if(!p.upgrades)p.upgrades={archer:false,cavalry:false};
+  if(!p.upgrades)p.upgrades={archer:false,cavalry:false,archerElite:false,cavalryArcher:false};
   if(typeof p.upgrades.archer!=='boolean')p.upgrades.archer=false;
   if(typeof p.upgrades.cavalry!=='boolean')p.upgrades.cavalry=false;
+  if(typeof p.upgrades.archerElite!=='boolean')p.upgrades.archerElite=false;
+  if(typeof p.upgrades.cavalryArcher!=='boolean')p.upgrades.cavalryArcher=false;
   if(typeof p.canoes!=='number')p.canoes=0;
   if(typeof p.chief!=='number')p.chief=1;
   if(typeof p.defeated!=='boolean')p.defeated=false;
@@ -612,6 +659,7 @@ function normalizeLoadedState(){
   state.nextQuarryExhaustionRound=state.round+randomInt(FIRST_EXHAUSTION_MIN,FIRST_EXHAUSTION_MAX);
  }
  if(!('currentEvent'in state))state.currentEvent=null;
+ if(!('currentEventRound'in state))state.currentEventRound=null;
  if(!Array.isArray(state.logs))state.logs=[];
 }
 
@@ -623,7 +671,7 @@ function render(){
  if(!state.players.length){
   notice.innerHTML='';
  }else{
-  notice.innerHTML=state.currentEvent
+  notice.innerHTML=(state.currentEvent&&state.currentEventRound===state.round)
    ? `<div class="event">${state.currentEvent}</div>`
    : '';
  }
@@ -648,8 +696,8 @@ function render(){
   <section><b>👥 Population & unités</b>
   <div class="row"><span>👑 Chef</span><span>${p.chief}</span></div>
   <div class="row"><span>Villageois</span><span>${p.villagers}</span></div>
-  <div class="row"><span>Archers</span><span>${p.archers}${p.upgrades.archer?' 🏹✨':''}</span></div>
-  <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}${p.upgrades.cavalry?' 🐎✨':''}</span></div>
+  <div class="row"><span>Archers</span><span>${p.archers}${p.upgrades.archer?' 🏹✨':''}${p.upgrades.archerElite?' 🎯':''}</span></div>
+  <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}${p.upgrades.cavalry?' 🐎✨':''}${p.upgrades.cavalryArcher?' 🏹':''}</span></div>
   <div class="row"><span>🛶 Canoës</span><span>${p.canoes}</span></div>
   <div class="row"><b>Population effective</b><b>${pop(p)}</b></div>
   <div class="row"><span>🏠 Capacité de logement</span><b>${pop(p)} / ${housingCapacity(p)}</b></div>
@@ -714,6 +762,14 @@ function render(){
    <button onclick="upgradeCavalry(${i})" ${p.upgrades.cavalry?'disabled':''}>
     ${p.upgrades.cavalry?'✅ Cavaliers améliorés':'🐎 Améliorer cavaliers'}<br>
     <small>${p.upgrades.cavalry?'Déplacement : 3 tuiles':'200 🟡 → déplacement 3 tuiles'}</small>
+   </button>
+   <button onclick="upgradeArcherElite(${i})" ${p.upgrades.archerElite?'disabled':''}>
+    ${p.upgrades.archerElite?'✅ Archers d’élite':'🎯 Archer d’élite'}<br>
+    <small>${p.upgrades.archerElite?'Portée : 3 tuiles':'200 🟡 → portée 3 tuiles'}</small>
+   </button>
+   <button onclick="upgradeCavalryArcher(${i})" ${p.upgrades.cavalryArcher?'disabled':''}>
+    ${p.upgrades.cavalryArcher?'✅ Cavaliers archers':'🐎🏹 Cavalier archer'}<br>
+    <small>${p.upgrades.cavalryArcher?'Attaque : 2 tuiles':'300 🟡 → attaque 2 tuiles'}</small>
    </button>
   </div>
   </section>
@@ -919,6 +975,8 @@ function subscribeShared(){
   };
   if(sharedPlayerKey==null)sharedPlayerKey=g.masterPlayerKey;
   showNotifications(g.notifications||[]);
+  const victory=g.logs?.find(x=>String(x).startsWith('🏆 Victoire de '));
+  if(victory && !seen.has('victory:'+g.round)){ seen.add('victory:'+g.round); const w=g.players?.find(p=>victory.includes(p.name)); if(w)showVictoryScreen(w); }
   window.render();
  });
 }
@@ -931,11 +989,11 @@ function showNotifications(list){
   }
  }
 }
-function showEphemeral(message){
+function showEphemeral(message,duration=5000){
  const layer=document.getElementById('ephemeralLayer');
  layer.innerHTML=`<div class="ephemeral">${escapeHtml(message)}</div>`;
  clearTimeout(ephemeralTimer);
- ephemeralTimer=setTimeout(()=>layer.innerHTML='',5000);
+ ephemeralTimer=setTimeout(()=>layer.innerHTML='',duration);
 }
 function escapeHtml(s){
  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
@@ -946,7 +1004,10 @@ function currentPlayers(){
 }
 function findPlayer(key){return currentPlayers().find(p=>p.key===key);}
 function snapshotPlayers(){
- return JSON.parse(JSON.stringify(currentPlayers()));
+ const a=JSON.parse(JSON.stringify(currentPlayers()));
+ a.__event=window.wakamState.currentEvent||null;
+ a.__aliveKeys=currentPlayers().filter(p=>!p.defeated).map(p=>p.key);
+ return a;
 }
 function diffNotifications(before,after,round){
  const out=[];
@@ -968,6 +1029,8 @@ function diffNotifications(before,after,round){
   });
   if(!!p.upgrades?.archer&&!b.upgrades?.archer)add('🏹 Amélioration des archers : déplacement 2 tuiles');
   if(!!p.upgrades?.cavalry&&!b.upgrades?.cavalry)add('🐎 Amélioration des cavaliers : déplacement 3 tuiles');
+  if(!!p.upgrades?.archerElite&&!b.upgrades?.archerElite)add('🎯 Archers d’élite : portée d’attaque 3 tuiles');
+  if(!!p.upgrades?.cavalryArcher&&!b.upgrades?.cavalryArcher)add('🐎🏹 Cavaliers archers : attaque à distance 2 tuiles');
   if((p.workFood||0)!==(b.workFood||0))add(`🌽 ${p.workFood} villageois affectés à la nourriture`);
   if((p.workWood||0)!==(b.workWood||0))add(`🪵 ${p.workWood} villageois affectés au bois`);
   if((p.workStone||0)!==(b.workStone||0))add(`🪨 ${p.workStone} villageois affectés à la pierre`);
@@ -981,6 +1044,15 @@ async function syncShared(before){
  if(!sharedMode||!sharedMaster)return;
  const s=window.wakamState;
  const notices=diffNotifications(before,s.players,s.round);
+ if(s.currentEvent&&s.currentEventRound===s.round && (!before.__event || before.__event!==s.currentEvent)){
+  s.players.filter(p=>!p.defeated).forEach(p=>notices.push({id:Date.now().toString()+Math.random(),targetKey:p.key,message:s.currentEvent,round:s.round}));
+ }
+ const beforeAlive=(before.__aliveKeys||[]);
+ const afterAlive=s.players.filter(p=>!p.defeated).map(p=>p.key);
+ if(beforeAlive.length>1&&afterAlive.length===1){
+  const winner=s.players.find(p=>!p.defeated);
+  if(winner)s.players.filter(p=>!p.defeated).forEach(p=>notices.push({id:Date.now().toString()+Math.random(),targetKey:p.key,message:'🏆 Victoire de '+winner.emoji+' '+winner.name+' !',round:s.round}));
+ }
  const gameRef=doc(db,'games',sharedGameId);
  const oldSnap=await getDoc(gameRef);
  const oldNotices=oldSnap.exists()&&Array.isArray(oldSnap.data().notifications)?oldSnap.data().notifications:[];
@@ -1001,13 +1073,15 @@ function wrapMutation(name){
  const fn=window[name];
  window[name]=function(...args){
   if(sharedMode&&!sharedMaster){alert('Seul le maître du jeu peut modifier la partie.');return;}
-  const before=sharedMode?snapshotPlayers():null;
+  const before=snapshotPlayers();
   const result=fn.apply(this,args);
+  const notices=diffNotifications(before,currentPlayers(),state.round);
+  if(!sharedMode){notices.forEach(n=>showEphemeral(n.message));}
   if(sharedMode&&sharedMaster)syncShared(before).catch(e=>console.error(e));
   return result;
  };
 }
-['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry'].forEach(wrapMutation);
+['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
 
 window.nextTurn=function(){
  if(sharedMode){
