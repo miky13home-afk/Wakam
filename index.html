@@ -300,7 +300,6 @@ function killVillager(i){
  render();
 }
 function setChiefName(i){
- if(sharedMode&&!sharedMaster){alert('Seul le maître du jeu peut modifier la partie.');return;}
  const p=state.players[i];
  if(!p.chief){alert('Le chef de cette tribu est mort.');return;}
  const name=prompt('Nom du chef / joueur :',p.chiefName||'');
@@ -952,9 +951,9 @@ window.prepareJoinShared=async function(){
 };
 
 window.joinShared=async function(code,key){
+ const chiefName=prompt('Ton nom de joueur / nom de chef :','');
+ if(chiefName===null)return;
  try{
-  const chiefName=prompt('Ton nom de joueur / nom de chef :','');
-  if(chiefName===null)return;
   await setDoc(doc(db,'games',code,'claims',key),{uid,playerKey:key,createdAt:serverTimestamp()});
  }catch(e){
   alert('Cette tribu vient probablement d’être prise. Choisis-en une autre.');
