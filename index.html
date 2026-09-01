@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wakam — Compteur de partie</title>
-<meta name="wakam-version" content="12">
+<meta name="wakam-version" content="13">
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f3efe7;color:#2f2a24}
 header{background:#3b3026;color:white;padding:14px 16px;position:sticky;top:0;z-index:2}
@@ -479,28 +479,25 @@ function upgradeCavalryArcher(i){
 }
 
 function triggerExhaustion(type){
- if(type==='forest'){
-  const active=state.players.some(p=>!p.defeated && p.workWood>0);
-  const msg=active
-   ? '🌲 ÉPUISEMENT DES FORÊTS : remplacez les tuiles forêt actuellement exploitées (cadre vert) par leurs versions sans cadre vert. Partez à la recherche de nouvelles forêts exploitables.'
-   : '🌲 ÉPUISEMENT DES FORÊTS : aucune forêt n’est actuellement exploitée. Les nouvelles forêts découvertes restent exploitables.';
-  log('⚠️ '+msg);
-  state.currentEvent=msg;
-  state.currentEventRound=state.round;
-  showEphemeral(msg,6500);
-  scheduleNextExhaustion('forest');
- }else{
-  const active=state.players.some(p=>!p.defeated && p.workStone>0);
-  const msg=active
-   ? '⛰️ ÉPUISEMENT DES CARRIÈRES : remplacez les tuiles montagne/carrière actuellement exploitées (cadre gris) par leurs versions sans cadre gris. Partez à la recherche de nouvelles carrières exploitables.'
-   : '⛰️ ÉPUISEMENT DES CARRIÈRES : aucune carrière n’est actuellement exploitée. Les nouvelles montagnes découvertes restent exploitables.';
-  log('⚠️ '+msg);
-  state.currentEvent=msg;
-  state.currentEventRound=state.round;
-  showEphemeral(msg,6500);
-  scheduleNextExhaustion('quarry');
- }
+  // Les épuisements sont enregistrés uniquement dans l'historique.
+  // Aucun événement temporaire n'est ajouté à l'état Firebase.
+  if(type==='forest'){
+   const active=state.players.some(p=>!p.defeated && p.workWood>0);
+   const msg=active
+    ? '🌲 ÉPUISEMENT DES FORÊTS : remplacez les tuiles forêt actuellement exploitées (cadre vert) par leurs versions sans cadre vert. Partez à la recherche de nouvelles forêts exploitables.'
+    : '🌲 ÉPUISEMENT DES FORÊTS : aucune forêt n’est actuellement exploitée. Les nouvelles forêts découvertes restent exploitables.';
+   log('⚠️ '+msg);
+   scheduleNextExhaustion('forest');
+  }else{
+   const active=state.players.some(p=>!p.defeated && p.workStone>0);
+   const msg=active
+    ? '⛰️ ÉPUISEMENT DES CARRIÈRES : remplacez les tuiles montagne/carrière actuellement exploitées (cadre gris) par leurs versions sans cadre gris. Partez à la recherche de nouvelles carrières exploitables.'
+    : '⛰️ ÉPUISEMENT DES CARRIÈRES : aucune carrière n’est actuellement exploitée. Les nouvelles montagnes découvertes restent exploitables.';
+   log('⚠️ '+msg);
+   scheduleNextExhaustion('quarry');
+  }
 }
+
 function applyTurnProduction(){
  state.players.forEach(p=>{
   if(p.defeated)return;
