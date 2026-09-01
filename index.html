@@ -837,6 +837,11 @@ let ephemeralTimer=null;
 let pendingSharedCount=0;
 let pendingSharedTribes=[];
 
+// Protection contre les doubles clics et les retours Firebase en retard.
+let sharedTurnBusy=false;
+let sharedPendingWrites=0;
+let sharedWriteQueue=Promise.resolve();
+
 onAuthStateChanged(auth,u=>{uid=u?.uid||null;});
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
 
@@ -970,7 +975,10 @@ function subscribeShared(){
   if(!snap.exists()){alert('Cette partie n’existe plus.');return;}
   const g=snap.data();
   sharedMaster=(g.masterUid===uid);
-  const old=window.wakamState||{};
+  // Pendant une écriture du maître, Firebase peut encore nous renvoyer
+  // une ancienne photographie. On ne doit surtout pas écraser le tour local.
+  if(sharedPendingWrites>0)return;
+
   window.wakamState={
    round:g.round||1,
    nextForestExhaustionRound:g.nextForestExhaustionRound,
@@ -1047,9 +1055,14 @@ function diffNotifications(before,after,round){
  return out;
 }
 
-async function syncShared(before){
- if(!sharedMode||!sharedMaster)return;
- const s=window.wakamState;
+function cloneSharedState(){
+ return JSON.parse(JSON.stringify(window.wakamState));
+}
+
+async function syncShared(before,afterState,gameId){
+ if(!sharedMode||!sharedMaster||!gameId)return;
+
+ const s=afterState;
  const notices=diffNotifications(before,s.players,s.round);
  if(s.currentEvent&&s.currentEventRound===s.round && (!before.__event || before.__event!==s.currentEvent)){
   s.players.filter(p=>!p.defeated).forEach(p=>notices.push({id:Date.now().toString()+Math.random(),targetKey:p.key,message:s.currentEvent,round:s.round}));
@@ -1060,10 +1073,13 @@ async function syncShared(before){
   const winner=s.players.find(p=>!p.defeated);
   if(winner)s.players.filter(p=>!p.defeated).forEach(p=>notices.push({id:Date.now().toString()+Math.random(),targetKey:p.key,message:'🏆 Victoire de '+winner.emoji+' '+winner.name+' !',round:s.round}));
  }
- const gameRef=doc(db,'games',sharedGameId);
+
+ const gameRef=doc(db,'games',gameId);
  const oldSnap=await getDoc(gameRef);
- const oldNotices=oldSnap.exists()&&Array.isArray(oldSnap.data().notifications)?oldSnap.data().notifications:[];
+ if(!oldSnap.exists())throw new Error('La partie partagée n’existe plus.');
+ const oldNotices=Array.isArray(oldSnap.data().notifications)?oldSnap.data().notifications:[];
  const notifications=oldNotices.concat(notices).slice(-100);
+
  await updateDoc(gameRef,{
   round:s.round,
   nextForestExhaustionRound:s.nextForestExhaustionRound,
@@ -1076,27 +1092,63 @@ async function syncShared(before){
  });
 }
 
+function enqueueSharedSync(before,afterState){
+ const gameId=sharedGameId;
+ if(!sharedMode||!sharedMaster||!gameId)return Promise.resolve();
+ sharedPendingWrites++;
+ const job=sharedWriteQueue.then(async()=>{
+  try{
+   await syncShared(before,afterState,gameId);
+  }finally{
+   sharedPendingWrites=Math.max(0,sharedPendingWrites-1);
+  }
+ });
+ // Une erreur ne doit jamais casser la file des écritures suivantes.
+ sharedWriteQueue=job.catch(e=>{
+  console.error('Synchronisation Firebase Wakam :',e);
+  showEphemeral('⚠️ Synchronisation Firebase impossible. Vérifie la connexion.');
+ });
+ return job;
+}
+
 function wrapMutation(name){
  const fn=window[name];
  window[name]=function(...args){
   if(sharedMode&&!sharedMaster){alert('Seul le maître du jeu peut modifier la partie.');return;}
   const before=snapshotPlayers();
   const result=fn.apply(this,args);
+  const after=sharedMode&&sharedMaster?cloneSharedState():null;
   const notices=diffNotifications(before,currentPlayers(),state.round);
   if(!sharedMode){notices.forEach(n=>showEphemeral(n.message));}
-  if(sharedMode&&sharedMaster)syncShared(before).catch(e=>console.error(e));
+  if(sharedMode&&sharedMaster)enqueueSharedSync(before,after);
   return result;
  };
 }
 ['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
 
-window.nextTurn=function(){
+window.nextTurn=async function(){
  if(sharedMode){
   if(!sharedMaster){alert('Seul le maître du jeu peut passer au tour suivant.');return;}
+  // Un seul passage de tour à la fois : un double-clic ne peut plus faire T+2
+  // ni lancer deux écritures Firebase concurrentes.
+  if(sharedTurnBusy)return;
+  sharedTurnBusy=true;
+  const btn=document.getElementById('nextTurnBtn');
+  if(btn)btn.disabled=true;
   const before=snapshotPlayers();
-  const result=originalNextTurn();
-  syncShared(before).catch(e=>console.error(e));
-  return result;
+  try{
+   originalNextTurn();
+   const after=cloneSharedState();
+   await enqueueSharedSync(before,after);
+  }catch(e){
+   console.error('Passage de tour Wakam :',e);
+   showEphemeral('⚠️ Impossible de synchroniser le passage de tour.');
+  }finally{
+   sharedTurnBusy=false;
+   if(btn)btn.disabled=!sharedMaster;
+   window.render();
+  }
+  return;
  }
  return originalNextTurn();
 };
@@ -1115,6 +1167,7 @@ window.leaveSharedGame=async function(){
  if(!confirm('Quitter cette partie sur cet appareil ?'))return;
  if(sharedUnsub)sharedUnsub();
  sharedUnsub=null;sharedMode=false;sharedMaster=false;sharedGameId=null;sharedPlayerKey=null;seen.clear();
+ sharedTurnBusy=false;sharedPendingWrites=0;sharedWriteQueue=Promise.resolve();
  document.getElementById('leaveSharedBtn').classList.add('hidden');
  document.getElementById('setupOverlay').classList.remove('hidden');
  window.selectMode('solo');
