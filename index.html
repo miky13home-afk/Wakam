@@ -540,6 +540,13 @@ function nextTurn(){
 
  state.round++;
 
+ // Un événement d'épuisement n'est visible que pendant le tour où il est déclenché.
+ // Au passage au tour suivant, on l'efface avant de vérifier les nouveaux épuisements.
+ if(state.currentEventRound!==state.round){
+  state.currentEvent=null;
+  state.currentEventRound=null;
+ }
+
  if(state.round>=state.nextForestExhaustionRound){
   triggerExhaustion('forest');
  }
