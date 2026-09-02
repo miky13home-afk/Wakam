@@ -989,19 +989,34 @@ window.prepareJoinShared=async function(){
  const code=(document.getElementById('joinCodeInput').value||'').trim().toUpperCase();
  if(code.length!==6){alert('Le code doit contenir 6 caractères.');return;}
  if(!uid){alert('Firebase n’est pas encore connecté.');return;}
- const gs=await getDoc(doc(db,'games',code));
- if(!gs.exists()){alert('Partie introuvable.');return;}
- const claims=await getDocs(collection(db,'games',code,'claims'));
- const taken=new Set(claims.docs.map(d=>d.id));
- const available=gs.data().players.filter(p=>!taken.has(p.key));
- if(!available.length){alert('Toutes les places sont prises.');return;}
- document.getElementById('sharedSetupDetails').innerHTML=`
+ try{
+  const gameRef=doc(db,'games',code);
+  const gs=await getDoc(gameRef);
+  if(!gs.exists()){alert('Partie introuvable.');return;}
+  const g=gs.data();
+  if(g.masterUid===uid && g.masterPlayerKey){
+   localStorage.setItem('wakamSharedSession',JSON.stringify({gameId:code,playerKey:g.masterPlayerKey}));
+   await enterShared(code,g.masterPlayerKey,true); return;
+  }
+  const memberSnap=await getDoc(doc(db,'games',code,'members',uid));
+  if(memberSnap.exists()){
+   const member=memberSnap.data();
+   if(member.playerKey){
+    localStorage.setItem('wakamSharedSession',JSON.stringify({gameId:code,playerKey:member.playerKey}));
+    await enterShared(code,member.playerKey,false); return;
+   }
+  }
+  const claims=await getDocs(collection(db,'games',code,'claims'));
+  const taken=new Set(claims.docs.map(d=>d.id));
+  const available=(g.players||[]).filter(p=>!taken.has(p.key));
+  if(!available.length){alert('Toutes les places sont déjà prises. Si tu jouais déjà cette partie sur cet appareil, ta place peut être récupérée automatiquement après actualisation.');return;}
+  document.getElementById('sharedSetupDetails').innerHTML=`
  <div class="sharedBox">
  <h3>👤 Choisis ta tribu</h3>
  <div class="choiceGrid">${available.map(p=>`<button class="choice" onclick="joinShared('${code}','${p.key}')">${p.emoji} ${p.name}</button>`).join('')}</div>
  </div>`;
+ }catch(e){console.error('Recherche de partie partagée :',e);alert('Impossible de retrouver la partie pour le moment.');}
 };
-
 window.joinShared=async function(code,key){
  try{
   await setDoc(doc(db,'games',code,'claims',key),{uid,playerKey:key,createdAt:serverTimestamp()});
@@ -1042,6 +1057,7 @@ function subscribeShared(){
   };
   if(sharedPlayerKey==null)sharedPlayerKey=g.masterPlayerKey;
   showNotifications(g.notifications||[]);
+  loadChiefNames(g);
   const victory=g.logs?.find(x=>String(x).startsWith('🏆 Victoire de '));
   if(victory && !seen.has('victory:'+g.round)){ seen.add('victory:'+g.round); const w=g.players?.find(p=>victory.includes(p.name)); if(w)showVictoryScreen(w); }
   window.render();
@@ -1152,21 +1168,25 @@ async function syncShared(before,afterState,gameId){
    }));
   }
 
-  const beforeAlive=(before.__aliveKeys||[]);
+  const beforePlayers=Array.isArray(before)?before:[];
+  const beforeAlive=beforePlayers.filter(p=>!p.defeated).map(p=>p.key);
   const afterAlive=s.players.filter(p=>!p.defeated).map(p=>p.key);
-
-  // Une seule tribu restante = victoire, quelle que soit la condition
-  // d'élimination qui vient de se produire.
-  if(beforeAlive.length>1 && afterAlive.length===1){
+  const chiefDeath=s.players.some(p=>{
+    const b=beforePlayers.find(x=>x.key===p.key);
+    return b && (b.chief||0)>0 && (p.chief||0)<=0;
+  });
+  const foyerDeath=s.players.some(p=>{
+    const b=beforePlayers.find(x=>x.key===p.key);
+    return b && (b.buildings?.Foyer||0)>0 && (p.buildings?.Foyer||0)<=0;
+  });
+  if((chiefDeath||foyerDeath) && beforeAlive.length>1 && afterAlive.length===1){
     const winner=s.players.find(p=>p.key===afterAlive[0]&&!p.defeated);
-    if(winner){
-      notices.push({
-        id:'victory-'+s.round+'-'+winner.key+'-'+Date.now(),
-        targetKey:winner.key,
-        message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+(winner.chiefName?' — 👑 '+winner.chiefName:'')+' est le dernier chef encore en lice !',
-        round:s.round
-      });
-    }
+    if(winner)notices.push({
+      id:'victory-'+s.round+'-'+winner.key+'-'+Date.now(),
+      targetKey:winner.key,
+      message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+(winner.chiefName?' — 👑 '+winner.chiefName:'')+' est le dernier chef encore en lice !',
+      round:s.round
+    });
   }
 
   const gameRef=doc(db,'games',gameId);
@@ -1220,7 +1240,11 @@ function wrapMutation(name){
   const result=fn.apply(this,args);
   const after=sharedMode&&sharedMaster?cloneSharedState():null;
   const notices=diffNotifications(before,currentPlayers(),state.round);
-  if(!sharedMode){notices.forEach(n=>showEphemeral(n.message));}
+  if(!sharedMode){
+   notices.forEach(n=>showEphemeral(n.message));
+  }else if(sharedMaster){
+   notices.filter(n=>n.targetKey===sharedPlayerKey).forEach(n=>showEphemeral(n.message));
+  }
   if(sharedMode&&sharedMaster)enqueueSharedSync(before,after);
   return result;
  };
