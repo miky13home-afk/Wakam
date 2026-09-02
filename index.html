@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wakam — Compteur de partie</title>
-<meta name="wakam-version" content="15">
+<meta name="wakam-version" content="14">
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f3efe7;color:#2f2a24}
 header{background:#3b3026;color:white;padding:14px 16px;position:sticky;top:0;z-index:2}
@@ -115,10 +115,10 @@ const TYPES=[
 ];
 
 const BUILDINGS=[
- ['Écurie',200,200],
+ ['Écurie',300,200],
  ['Cabane des archers',300,200],
  ['Port',300,200],
- ['Pont',200,200],
+ ['Pont',400,200],
  ['Habitation',200,50],
  ['Foyer',150,100],
  ['Totem',400,0]
@@ -299,16 +299,6 @@ function killVillager(i){
  log(`☠️ ${p.emoji} ${p.name}: mort d'un villageois (${label})`);
  render();
 }
-function setChiefName(i){
- const p=state.players[i];
- if(!p.chief){alert('Le chef de cette tribu est mort.');return;}
- const name=prompt('Nom du chef / joueur :',p.chiefName||'');
- if(name===null)return;
- p.chiefName=name.trim().slice(0,40);
- log(`👑 ${p.emoji} ${p.name}: chef nommé ${p.chiefName||'sans nom'}`);
- render();
-}
-
 function createUnit(i,type){
  const p=state.players[i];
 
@@ -471,7 +461,7 @@ function upgradeCavalry(i){
   alert('Il faut 100 or pour améliorer les cavaliers.');
   return;
  }
- p.gold-=200;
+ p.gold-=100;
  p.upgrades.cavalry=true;
  log(`${p.emoji} ${p.name}: cavaliers améliorés — déplacement 3 tuiles`);
  render();
@@ -482,7 +472,7 @@ function upgradeCavalryArcher(i){
  if(!p.upgrades.cavalry){alert('Il faut d’abord améliorer les cavaliers.');return;}
  if(p.upgrades.cavalryArcher)return;
  if(p.gold<200){alert('Il faut 200 or pour les cavaliers archers.');return;}
- p.gold-=300;
+ p.gold-=200;
  p.upgrades.cavalryArcher=true;
  log(`${p.emoji} ${p.name}: cavaliers archers — attaque à distance 2 tuiles`);
  render();
@@ -556,7 +546,7 @@ function checkVictory(){
  const alive=activePlayers();
  if(alive.length===1){
   const winner=alive[0];
-  const victoryText='🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+' est le dernier chef en vie !';
+  const victoryText='🏆 Victoire de '+winner.emoji+' '+winner.name+' !';
   const already=state.logs.includes(victoryText);
   if(!already){
    state.logs.unshift(victoryText);
@@ -577,7 +567,7 @@ function showVictoryScreen(winner){
  const box=document.getElementById('victoryOverlay');
  if(!box)return;
  if(winner){
-  box.innerHTML=`<div class="victoryCard"><h2>🏆 VICTOIRE !</h2><div class="victoryTribe">${winner.emoji} ${winner.name}</div><p>🏆 Tous les chefs adverses ont été éliminés.<br>Cette tribu remporte la partie !</p><button onclick="closeVictoryScreen()">Continuer à consulter la partie</button></div>`;
+  box.innerHTML=`<div class="victoryCard"><h2>🏆 VICTOIRE !</h2><div class="victoryTribe">${winner.emoji} ${winner.name}${winner.chiefName?'<br>👑 '+escapeHtml(winner.chiefName):''}</div><p>La dernière tribu encore en lice remporte la partie.</p><button onclick="closeVictoryScreen()">Continuer à consulter la partie</button></div>`;
  }else{
   box.innerHTML=`<div class="victoryCard"><h2>🏆 FIN DE PARTIE</h2><div class="victoryTribe">Toutes les tribus sont éliminées.</div><button onclick="closeVictoryScreen()">Continuer à consulter la partie</button></div>`;
  }
@@ -641,7 +631,7 @@ function normalizeLoadedState(){
   if(typeof p.upgrades.cavalryArcher!=='boolean')p.upgrades.cavalryArcher=false;
   if(typeof p.canoes!=='number')p.canoes=0;
   if(typeof p.chief!=='number')p.chief=1;
-  if(typeof p.chiefName!=='string')p.chiefName='';
+   if(typeof p.chiefName!=='string')p.chiefName='';
   if(typeof p.defeated!=='boolean')p.defeated=false;
   if(typeof p.workFood!=='number')p.workFood=0;
   if(typeof p.workWood!=='number')p.workWood=0;
@@ -663,6 +653,19 @@ function normalizeLoadedState(){
  if(!('currentEvent'in state))state.currentEvent=null;
  if(!('currentEventRound'in state))state.currentEventRound=null;
  if(!Array.isArray(state.logs))state.logs=[];
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+
+
+function setChiefName(i){
+  const p=state.players[i];
+  if(!p)return;
+  const name=prompt('Nom du chef de '+p.name+':',p.chiefName||'');
+  if(name===null)return;
+  p.chiefName=name.trim().slice(0,40);
+  log('👑 '+p.name+': chef nommé '+(p.chiefName||'sans nom'));
+  render();
 }
 
 function render(){
@@ -696,8 +699,8 @@ function render(){
   <div class="row"><span>Ressources totales</span><span class="badge">${p.food+p.wood+p.stone}</span></div>
 
   <section><b>👥 Population & unités</b>
-  <div class="row"><span>👑 Chef</span><span>${p.chief}${p.chiefName?` — ${escapeHtml(p.chiefName)}`:''}</span></div>
-  <div class="row"><span>Nom du chef</span><button class="secondary" onclick="setChiefName(${i})">${p.chiefName?'✏️ Modifier':'✍️ Ajouter mon nom'}</button></div>
+  <div class="row"><span>👑 Chef</span><span>${p.chiefName?escapeHtml(p.chiefName)+' — ':''}${p.chief}</span></div>
+   <div class="row"><span class="mini">Nom du chef</span><button class="secondary chiefNameBtn" onclick="setChiefName(${i})">✏️ ${p.chiefName?'Modifier':'Définir'}</button></div>
   <div class="row"><span>Villageois</span><span>${p.villagers}</span></div>
   <div class="row"><span>Archers</span><span>${p.archers}${p.upgrades.archer?' 🏹✨':''}${p.upgrades.archerElite?' 🎯':''}</span></div>
   <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}${p.upgrades.cavalry?' 🐎✨':''}${p.upgrades.cavalryArcher?' 🏹':''}</span></div>
@@ -841,6 +844,35 @@ let sharedWriteQueue=Promise.resolve();
 onAuthStateChanged(auth,u=>{uid=u?.uid||null;});
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
 
+window.setChiefName=async function(i){
+  const p=currentPlayers()[i];
+  if(!p)return;
+  const name=prompt('Nom du chef de '+p.name+':',p.chiefName||'');
+  if(name===null)return;
+  const clean=name.trim().slice(0,40);
+  if(!sharedMode){
+    p.chiefName=clean;
+    log('👑 '+p.name+': chef nommé '+(clean||'sans nom'));
+    render();
+    return;
+  }
+  if(!uid||!sharedGameId){alert('Connexion Firebase indisponible.');return;}
+  if(p.key!==sharedPlayerKey&&!sharedMaster){alert('Tu peux uniquement définir le nom de ton propre chef.');return;}
+  try{
+    await setDoc(doc(db,'games',sharedGameId,'members',uid),{uid,playerKey:sharedPlayerKey,chiefName:clean,isMaster:sharedMaster},{merge:true});
+    // Le maître écrit aussi directement dans le jeu pour que tous les appareils voient le nom.
+    if(sharedMaster){
+      const g=cloneSharedState();
+      const target=g.players.find(x=>x.key===p.key);
+      if(target)target.chiefName=clean;
+      await updateDoc(doc(db,'games',sharedGameId),{players:g.players});
+    }
+  }catch(e){
+    console.error(e);
+    alert('Impossible d’enregistrer le nom du chef.');
+  }
+};
+
 const originalRender=window.render;
 const originalNextTurn=window.nextTurn;
 const originalSaveGame=window.saveGame;
@@ -924,12 +956,9 @@ window.createSharedGame=async function(){
 
 window.claimMaster=async function(key){
  const code=document.querySelector('.codeBox').textContent.trim();
- const chiefName=prompt('Ton nom de joueur / nom de chef :','');
- if(chiefName===null)return;
  await setDoc(doc(db,'games',code,'claims',key),{uid,playerKey:key,createdAt:serverTimestamp()});
  await setDoc(doc(db,'games',code,'members',uid),{uid,playerKey:key,isMaster:true});
  await updateDoc(doc(db,'games',code),{masterPlayerKey:key});
- await updateDoc(doc(db,'games',code),{players:(await getDoc(doc(db,'games',code))).data().players.map(p=>p.key===key?{...p,chiefName:chiefName.trim().slice(0,40)}:p)});
  await enterShared(code,key,true);
 };
 
@@ -951,15 +980,13 @@ window.prepareJoinShared=async function(){
 };
 
 window.joinShared=async function(code,key){
- const chiefName=prompt('Ton nom de joueur / nom de chef :','');
- if(chiefName===null)return;
  try{
   await setDoc(doc(db,'games',code,'claims',key),{uid,playerKey:key,createdAt:serverTimestamp()});
  }catch(e){
   alert('Cette tribu vient probablement d’être prise. Choisis-en une autre.');
   return;
  }
- await setDoc(doc(db,'games',code,'members',uid),{uid,playerKey:key,isMaster:false,chiefName:chiefName.trim().slice(0,40)});
+ await setDoc(doc(db,'games',code,'members',uid),{uid,playerKey:key,isMaster:false});
  await enterShared(code,key,false);
 };
 
@@ -972,7 +999,7 @@ async function enterShared(code,key,isMaster){
 
 function subscribeShared(){
  if(sharedUnsub)sharedUnsub();
- sharedUnsub=onSnapshot(doc(db,'games',sharedGameId),async snap=>{
+ sharedUnsub=onSnapshot(doc(db,'games',sharedGameId),snap=>{
   if(!snap.exists()){alert('Cette partie n’existe plus.');return;}
   const g=snap.data();
   sharedMaster=(g.masterUid===uid);
@@ -990,23 +1017,33 @@ function subscribeShared(){
    logs:Array.isArray(g.logs)?g.logs:[],
   };
   if(sharedPlayerKey==null)sharedPlayerKey=g.masterPlayerKey;
-  // Le joueur peut conserver son nom de chef dans son document membre
-  // sans obtenir le droit de modifier l'état global de la partie.
-  try{
-   if(sharedPlayerKey && uid){
-    const memberSnap=await getDoc(doc(db,'games',sharedGameId,'members',uid));
-    const memberName=memberSnap.exists()?String(memberSnap.data().chiefName||'').trim():'';
-    if(memberName){
-     const own=window.wakamState.players.find(p=>p.key===sharedPlayerKey);
-     if(own)own.chiefName=memberName;
-    }
-   }
-  }catch(e){ console.warn('Nom du chef membre indisponible :',e); }
   showNotifications(g.notifications||[]);
-  const victory=g.logs?.find(x=>String(x).startsWith('🏆 VICTOIRE !'));
+  const victory=g.logs?.find(x=>String(x).startsWith('🏆 Victoire de '));
   if(victory && !seen.has('victory:'+g.round)){ seen.add('victory:'+g.round); const w=g.players?.find(p=>victory.includes(p.name)); if(w)showVictoryScreen(w); }
   window.render();
  });
+}
+
+async function loadChiefNames(g){
+  try{
+    const names=new Map();
+    if(sharedMaster){
+      const membersSnap=await getDocs(collection(db,'games',sharedGameId,'members'));
+      membersSnap.docs.forEach(d=>{const m=d.data();if(m.playerKey&&typeof m.chiefName==='string')names.set(m.playerKey,m.chiefName);});
+    }else if(sharedPlayerKey){
+      const ms=await getDoc(doc(db,'games',sharedGameId,'members',uid));
+      if(ms.exists()){const m=ms.data();if(typeof m.chiefName==='string')names.set(sharedPlayerKey,m.chiefName);}
+    }
+    if(names.size){
+      let changed=false;
+      const players=(g.players||[]).map(p=>{const n=names.get(p.key);if(n!==undefined&&p.chiefName!==n){changed=true;return {...p,chiefName:n};}return p;});
+      if(changed){
+        window.wakamState={...window.wakamState,players};
+        window.render();
+        if(sharedMaster)await updateDoc(doc(db,'games',sharedGameId),{players});
+      }
+    }
+  }catch(e){console.warn('Lecture des noms de chefs impossible',e);}
 }
 
 function showNotifications(list){
@@ -1063,8 +1100,10 @@ function diffNotifications(before,after,round){
   if((p.workWood||0)!==(b.workWood||0))add(`🪵 ${p.workWood} villageois affectés au bois`);
   if((p.workStone||0)!==(b.workStone||0))add(`🪨 ${p.workStone} villageois affectés à la pierre`);
   if((p.chief||0)<(b.chief||0))add('☠️ Le chef est mort');
-  if((p.chiefName||'')!==(b.chiefName||'') && p.chiefName)add(`👑 Chef : ${p.chiefName}`);
-  if(!b.defeated&&p.defeated)add('☠️ Tribu éliminée');
+  if(!b.defeated&&p.defeated){
+     if((p.buildings?.Foyer||0)<=0)add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre dernier Foyer a été détruit.');
+     else add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre chef est mort.');
+   }
  });
  return out;
 }
@@ -1096,7 +1135,7 @@ async function syncShared(before,afterState,gameId){
    if(winner)s.players.filter(p=>!p.defeated).forEach(p=>notices.push({
     id:Date.now().toString()+Math.random(),
     targetKey:p.key,
-    message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+' est le dernier chef en vie !',
+    message:'🏆 Victoire de '+winner.emoji+' '+winner.name+' !',
     round:s.round
    }));
   }
@@ -1157,7 +1196,7 @@ function wrapMutation(name){
   return result;
  };
 }
-['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher','setChiefName'].forEach(wrapMutation);
+['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
 
 window.nextTurn=async function(){
   if(sharedMode){
@@ -1231,7 +1270,7 @@ window.render=function(){
     if(!card.classList.contains(sharedPlayerKey))card.style.display='none';
    });
    const card=document.querySelector('#players .card.'+CSS.escape(sharedPlayerKey));
-   if(card)card.querySelectorAll('button,input').forEach(el=>el.disabled=true);
+   if(card)card.querySelectorAll('button,input').forEach(el=>{ if(!el.classList.contains('chiefNameBtn')) el.disabled=true; });
   }
   const notice=document.getElementById('eventNotice');
   if(s.currentEventRound!==s.round)notice.innerHTML='';
