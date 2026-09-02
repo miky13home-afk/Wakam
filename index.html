@@ -841,7 +841,11 @@ let sharedTurnBusy=false;
 let sharedPendingWrites=0;
 let sharedWriteQueue=Promise.resolve();
 
-onAuthStateChanged(auth,u=>{uid=u?.uid||null;});
+let restoringSharedSession=false;
+onAuthStateChanged(auth,u=>{
+ uid=u?.uid||null;
+ if(uid && !sharedMode && !restoringSharedSession) restoreSharedSession();
+});
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
 
 window.setChiefName=async function(i){
@@ -924,6 +928,25 @@ async function newCode(){
  throw new Error('Impossible de créer un code de partie.');
 }
 
+async function restoreSharedSession(){
+ const raw=localStorage.getItem('wakamSharedSession');
+ if(!raw||!uid)return;
+ let session;
+ try{session=JSON.parse(raw);}catch(e){localStorage.removeItem('wakamSharedSession');return;}
+ if(!session?.gameId||!session?.playerKey)return;
+ restoringSharedSession=true;
+ try{
+  const snap=await getDoc(doc(db,'games',session.gameId));
+  if(!snap.exists()){localStorage.removeItem('wakamSharedSession');return;}
+  const g=snap.data();
+  const isMaster=g.masterUid===uid;
+  const playerExists=Array.isArray(g.players)&&g.players.some(p=>p.key===session.playerKey);
+  if(!playerExists){localStorage.removeItem('wakamSharedSession');return;}
+  await enterShared(session.gameId,session.playerKey,isMaster);
+ }catch(e){console.warn('Reprise automatique de la partie partagée impossible :',e);}
+ finally{restoringSharedSession=false;}
+}
+
 window.createSharedGame=async function(){
  if(!uid){alert('Firebase n’est pas encore connecté. Attends quelques secondes.');return;}
  if(pendingSharedTribes.length!==pendingSharedCount)return;
@@ -987,6 +1010,7 @@ window.joinShared=async function(code,key){
   return;
  }
  await setDoc(doc(db,'games',code,'members',uid),{uid,playerKey:key,isMaster:false});
+ localStorage.setItem('wakamSharedSession',JSON.stringify({gameId:code,playerKey:key}));
  await enterShared(code,key,false);
 };
 
@@ -1101,8 +1125,9 @@ function diffNotifications(before,after,round){
   if((p.workStone||0)!==(b.workStone||0))add(`🪨 ${p.workStone} villageois affectés à la pierre`);
   if((p.chief||0)<(b.chief||0))add('☠️ Le chef est mort');
   if(!b.defeated&&p.defeated){
-     if((p.buildings?.Foyer||0)<=0)add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre dernier Foyer a été détruit.');
-     else add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre chef est mort.');
+     if((p.chief||0)<(b.chief||0)) add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre chef est mort.');
+     else if((p.buildings?.Foyer||0)<=0) add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre dernier Foyer a été détruit.');
+     else add('☠️ VOTRE TRIBU EST ÉLIMINÉE.');
    }
  });
  return out;
@@ -1130,14 +1155,18 @@ async function syncShared(before,afterState,gameId){
   const beforeAlive=(before.__aliveKeys||[]);
   const afterAlive=s.players.filter(p=>!p.defeated).map(p=>p.key);
 
-  if(beforeAlive.length>1&&afterAlive.length===1){
-   const winner=s.players.find(p=>!p.defeated);
-   if(winner)s.players.filter(p=>!p.defeated).forEach(p=>notices.push({
-    id:Date.now().toString()+Math.random(),
-    targetKey:p.key,
-    message:'🏆 Victoire de '+winner.emoji+' '+winner.name+' !',
-    round:s.round
-   }));
+  // Une seule tribu restante = victoire, quelle que soit la condition
+  // d'élimination qui vient de se produire.
+  if(beforeAlive.length>1 && afterAlive.length===1){
+    const winner=s.players.find(p=>p.key===afterAlive[0]&&!p.defeated);
+    if(winner){
+      notices.push({
+        id:'victory-'+s.round+'-'+winner.key+'-'+Date.now(),
+        targetKey:winner.key,
+        message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+(winner.chiefName?' — 👑 '+winner.chiefName:'')+' est le dernier chef encore en lice !',
+        round:s.round
+      });
+    }
   }
 
   const gameRef=doc(db,'games',gameId);
@@ -1252,6 +1281,7 @@ window.leaveSharedGame=async function(){
  if(sharedUnsub)sharedUnsub();
  sharedUnsub=null;sharedMode=false;sharedMaster=false;sharedGameId=null;sharedPlayerKey=null;seen.clear();
  sharedTurnBusy=false;sharedPendingWrites=0;sharedWriteQueue=Promise.resolve();
+ localStorage.removeItem('wakamSharedSession');
  document.getElementById('leaveSharedBtn').classList.add('hidden');
  document.getElementById('setupOverlay').classList.remove('hidden');
  window.selectMode('solo');
