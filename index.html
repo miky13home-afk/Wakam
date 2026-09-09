@@ -50,6 +50,11 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 .victoryCard{background:white;border-radius:22px;padding:28px;max-width:460px;width:100%;text-align:center;box-shadow:0 12px 45px #0008}
 .victoryCard h2{font-size:32px;margin:0 0 10px}.victoryTribe{font-size:26px;font-weight:900;margin:14px 0}
 .playerOnlyNote{background:#f6f0e8;border-radius:10px;padding:8px;margin:8px 0;font-size:12px;font-weight:700}
+
+.deathModal{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
+.deathCard{background:white;border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 8px 30px #0005}
+.deathCard h3{margin-top:0}.deathCard .field{margin:12px 0}.deathCard select,.deathCard input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:9px}
+.opponentSummary{margin-top:12px;border-top:1px solid #eee;padding-top:10px}.opponentTable{width:100%;border-collapse:collapse;font-size:12px}.opponentTable th,.opponentTable td{padding:6px 4px;border-bottom:1px solid #eee;text-align:center}.opponentTable th:first-child,.opponentTable td:first-child{text-align:left}
 </style>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#3b3026">
@@ -72,6 +77,14 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 <div id="ephemeralLayer" class="noticeCenter"></div>
 <div id="victoryOverlay" class="victoryOverlay hidden"></div>
 </main>
+
+<div id="deathModal" class="deathModal hidden">
+<div class="deathCard">
+<h3 id="deathModalTitle">Unités mortes</h3>
+<div class="field"><label>Nombre de morts</label><input id="deathCountInput" type="number" min="1" value="1"></div>
+<div class="field hidden" id="deathAssignmentField"><label>Affectation des villageois</label><select id="deathAssignmentSelect"><option value="workFood">🌽 Nourriture</option><option value="workWood">🪵 Bois</option><option value="workStone">🪨 Pierre</option><option value="none">👤 Sans affectation</option></select></div>
+<div class="controls"><button class="secondary" onclick="closeDeathModal()">Annuler</button><button class="danger" onclick="confirmDeathModal()">Confirmer</button></div>
+</div></div>
 
 <div class="overlay" id="setupOverlay">
 <div class="setup">
@@ -281,24 +294,43 @@ function adjust(i,key,d){
  render();
 }
 
-function killVillager(i){
- let p=state.players[i];
- if(p.villagers<=0){alert('Aucun villageois disponible.');return}
- const choice=prompt(`Mort d'un villageois chez ${p.name}.\n\nOù était-il affecté ?\n1 = 🌽 Nourriture (${p.workFood})\n2 = 🪵 Bois (${p.workWood})\n3 = 🪨 Pierre (${p.workStone})\n4 = 👤 Sans affectation`);
- if(choice===null)return;
- const c=choice.trim();
- let workKey=null,label='';
- if(c==='1'){workKey='workFood';label='nourriture'}
- else if(c==='2'){workKey='workWood';label='bois'}
- else if(c==='3'){workKey='workStone';label='pierre'}
- else if(c==='4'){label='sans affectation'}
- else {alert('Choix invalide.');return}
- if(workKey && p[workKey]<=0){alert(`Il n'y a aucun villageois affecté à ${label}.`);return}
- p.villagers--;
- if(workKey)p[workKey]--;
- log(`☠️ ${p.emoji} ${p.name}: mort d'un villageois (${label})`);
- render();
+function openDeathModal(i,type){
+ const p=state.players[i];
+ if(!p)return;
+ const key=type==='villager'?'villagers':type==='archer'?'archers':type==='cavalry'?'cavalry':type==='canoe'?'canoes':'chief';
+ const max=Number(p[key]||0);
+ if(max<=0){alert(type==='villager'?'Aucun villageois disponible.':'Aucune unité disponible.');return;}
+ window.deathModalState={i,type,max};
+ document.getElementById('deathModalTitle').textContent=(type==='villager'?'Villageois morts':` ${labelUnit(type)}s morts`);
+ const input=document.getElementById('deathCountInput'); input.max=max; input.value=1;
+ const af=document.getElementById('deathAssignmentField');
+ af.classList.toggle('hidden',type!=='villager');
+ if(type==='villager'){
+  const sel=document.getElementById('deathAssignmentSelect');
+  sel.innerHTML=`<option value="workFood">🌽 Nourriture (${p.workFood})</option><option value="workWood">🪵 Bois (${p.workWood})</option><option value="workStone">🪨 Pierre (${p.workStone})</option><option value="none">👤 Sans affectation (${Math.max(0,p.villagers-p.workFood-p.workWood-p.workStone)})</option>`;
+ }
+ document.getElementById('deathModal').classList.remove('hidden');
 }
+function closeDeathModal(){document.getElementById('deathModal').classList.add('hidden');window.deathModalState=null;}
+function confirmDeathModal(){
+ const st=window.deathModalState;if(!st)return;
+ const p=state.players[st.i]; const n=Math.max(1,parseInt(document.getElementById('deathCountInput').value)||0);
+ if(n>st.max){alert(`Maximum : ${st.max}.`);return;}
+ if(st.type==='villager'){
+  const work=document.getElementById('deathAssignmentSelect').value;
+  const available=work==='workFood'?p.workFood:work==='workWood'?p.workWood:work==='workStone'?p.workStone:p.villagers-p.workFood-p.workWood-p.workStone;
+  if(n>available){alert(`Il n'y a que ${Math.max(0,available)} villageois dans cette affectation.`);return;}
+  p.villagers-=n; if(work!=='none')p[work]-=n;
+ }else{
+  const key=st.type==='archer'?'archers':st.type==='cavalry'?'cavalry':st.type==='canoe'?'canoes':'chief';
+  p[key]=Math.max(0,(p[key]||0)-n);
+  if(st.type==='chief') eliminatePlayer(p,'le chef est mort');
+ }
+ closeDeathModal();
+ checkVictory(); render();
+}
+function killVillager(i){openDeathModal(i,'villager');}
+
 function createUnit(i,type){
  const p=state.players[i];
 
@@ -340,32 +372,13 @@ function labelUnit(type){
 
 function killUnit(i,type){
  const p=state.players[i];
-
- // Pour un villageois, on demande explicitement où il était affecté
- // afin de retirer le bon poste de travail (et non automatiquement la nourriture).
- if(type==='villager'){
-  killVillager(i);
-  return;
- }
-
+ if(!p)return;
+ if(type==='villager'||type==='archer'||type==='cavalry'||type==='canoe'){openDeathModal(i,type);return;}
  if(type==='chief'){
   if(!p.chief)return;
   p.chief=0;
   eliminatePlayer(p,'le chef est mort');
-  return;
  }
-
- const key=type==='villager'?'villagers':
-            type==='archer'?'archers':
-            type==='cavalry'?'cavalry':'canoes';
-
- if(p[key]<=0)return;
-
- p[key]--;
-
- log('☠️ '+p.name+': perte de '+labelUnit(type)+'.');
- checkVictory();
- render();
 }
 
 function eliminatePlayer(p,reason){
@@ -445,8 +458,7 @@ function upgradeArcher(i){
 
 function upgradeArcherElite(i){
  const p=state.players[i];
- if(!p.upgrades.archer){alert('Il faut d’abord améliorer les archers.');return;}
- if(p.upgrades.archerElite)return;
+  if(p.upgrades.archerElite)return;
  if(p.gold<200){alert('Il faut 200 or pour les archers d’élite.');return;}
  p.gold-=200;
  p.upgrades.archerElite=true;
@@ -469,8 +481,7 @@ function upgradeCavalry(i){
 
 function upgradeCavalryArcher(i){
  const p=state.players[i];
- if(!p.upgrades.cavalry){alert('Il faut d’abord améliorer les cavaliers.');return;}
- if(p.upgrades.cavalryArcher)return;
+  if(p.upgrades.cavalryArcher)return;
  if(p.gold<200){alert('Il faut 200 or pour les cavaliers archers.');return;}
  p.gold-=200;
  p.upgrades.cavalryArcher=true;
@@ -810,7 +821,7 @@ if("serviceWorker"in navigator){
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {getAuth,signInAnonymously,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-import {getFirestore,doc,getDoc,setDoc,updateDoc,onSnapshot,collection,getDocs,serverTimestamp} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import {getFirestore,doc,getDoc,setDoc,updateDoc,onSnapshot,collection,getDocs,serverTimestamp,runTransaction} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 const firebaseConfig={
  apiKey:"AIzaSyDFEf_CF7msBeFL6dtcS-okHdDPRkd3R-M",
@@ -826,6 +837,8 @@ const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 
 let uid=null;
+let authReadyResolve;
+const authReady=new Promise(resolve=>{authReadyResolve=resolve;});
 let sharedMode=false;
 let sharedMaster=false;
 let sharedGameId=null;
@@ -844,6 +857,7 @@ let sharedWriteQueue=Promise.resolve();
 let restoringSharedSession=false;
 onAuthStateChanged(auth,u=>{
  uid=u?.uid||null;
+ authReadyResolve(u||null);
  if(uid && !sharedMode && !restoringSharedSession) restoreSharedSession();
 });
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
@@ -916,7 +930,7 @@ window.toggleSharedTribe=function(key){
  if(pendingSharedTribes.includes(key))pendingSharedTribes=pendingSharedTribes.filter(x=>x!==key);
  else if(pendingSharedTribes.length<pendingSharedCount)pendingSharedTribes.push(key);
  TYPES.forEach(t=>{const b=document.getElementById('st_'+t.key);if(b)b.classList.toggle('selected',pendingSharedTribes.includes(t.key));});
- const b=document.getElementById('createSharedBtn');if(b)b.disabled=!(uid&&pendingSharedTribes.length===pendingSharedCount);
+ const b=document.getElementById('createSharedBtn');if(b)b.disabled=(pendingSharedTribes.length!==pendingSharedCount);
 };
 
 function code6(){
@@ -948,11 +962,23 @@ async function restoreSharedSession(){
 }
 
 window.createSharedGame=async function(){
- if(!uid){alert('Firebase n’est pas encore connecté. Attends quelques secondes.');return;}
- if(pendingSharedTribes.length!==pendingSharedCount)return;
- const code=await newCode();
- const players=TYPES.filter(t=>pendingSharedTribes.includes(t.key)).map(freshPlayer);
- const game={
+ const btn=document.getElementById('createSharedBtn');
+ const box=document.getElementById('sharedSetupDetails');
+ if(pendingSharedTribes.length!==pendingSharedCount){
+   alert('Sélectionne le bon nombre de tribus avant de créer la partie.');
+   return;
+ }
+ if(btn){btn.disabled=true;btn.textContent='Création en cours…';}
+ try{
+   if(!uid){
+     const u=await Promise.race([authReady,new Promise(resolve=>setTimeout(()=>resolve(null),10000))]);
+     uid=u?.uid||uid;
+   }
+   if(!uid) throw new Error('AUTH: Firebase n’a pas fourni d’identifiant anonyme.');
+   // Génère un code sans bloquer indéfiniment si une lecture Firestore est refusée.
+   const code=await Promise.race([newCode(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('TIMEOUT: impossible de vérifier la disponibilité du code Firebase.')),10000))]);
+   const players=TYPES.filter(t=>pendingSharedTribes.includes(t.key)).map(freshPlayer);
+   const game={
   code,
   masterUid:uid,
   masterPlayerKey:null,
@@ -975,6 +1001,17 @@ window.createSharedGame=async function(){
  <div>Choisis maintenant la tribu que tu joues :</div>
  <div class="choiceGrid">${players.map(p=>`<button class="choice" onclick="claimMaster('${p.key}')">${p.emoji} ${p.name}</button>`).join('')}</div>
  </div>`;
+ }catch(e){
+   console.error('Création de partie partagée impossible :',e);
+   if(box){
+     const msg=(e?.message||String(e)).slice(0,300);
+     box.insertAdjacentHTML('beforeend',`<div style="margin-top:10px;color:#b00020"><b>Erreur de création :</b> ${msg}</div>`);
+   }
+   alert('La partie n’a pas pu être créée. Consulte le message affiché sous le bouton.');
+ }finally{
+   const b=document.getElementById('createSharedBtn');
+   if(b && !document.querySelector('.codeBox')){b.disabled=(pendingSharedTribes.length!==pendingSharedCount);b.textContent='Créer la partie';}
+ }
 };
 
 window.claimMaster=async function(key){
@@ -1089,7 +1126,7 @@ async function loadChiefNames(g){
 function showNotifications(list){
  for(const n of list){
   if(!n||seen.has(n.id))continue;
-  if(n.targetKey===sharedPlayerKey){
+  if(n.targetKey===null || n.targetKey===sharedPlayerKey){
    seen.add(n.id);showEphemeral(n.message);
   }
  }
@@ -1119,12 +1156,20 @@ function diffNotifications(before,after,round){
  after.forEach((p,idx)=>{
   const b=before.find(x=>x.key===p.key);
   if(!b)return;
-  const add=(text)=>out.push({id:Date.now().toString()+Math.random(),targetKey:p.key,message:text,round});
+  const add=(text,targetKey=p.key)=>out.push({id:Date.now().toString()+Math.random(),targetKey,message:text,round});
   const units=[['villagers','villageois'],['archers','archer'],['cavalry','cavalier'],['canoes','canoë']];
   units.forEach(([k,label])=>{
    const d=(p[k]||0)-(b[k]||0);
    if(d>0)add(`+${d} ${label}${d>1?'s':''} créé${d>1?'s':''}`);
-   if(d<0)add(`☠️ ${Math.abs(d)} ${label}${Math.abs(d)>1?'s':''} mort${Math.abs(d)>1?'s':''}`);
+   if(d<0){
+    let extra='';
+    if(k==='villagers'){
+      const changes=[['workFood','nourriture'],['workWood','bois'],['workStone','pierre']].map(([wk,l])=>({wk,l,d:(p[wk]||0)-(b[wk]||0)})).filter(x=>x.d<0);
+      if(changes.length===1)extra=` — affectation : ${changes[0].l}`;
+      else if(changes.length>1)extra=` — affectations modifiées`;
+    }
+    add(`☠️ ${Math.abs(d)} ${label}${Math.abs(d)>1?'s':''} mort${Math.abs(d)>1?'s':''}${extra}`,null);
+   }
   });
   const buildings=new Set([...Object.keys(b.buildings||{}),...Object.keys(p.buildings||{})]);
   buildings.forEach(k=>{
@@ -1209,47 +1254,67 @@ async function syncShared(before,afterState,gameId){
   });
 }
 
+async function syncSharedPlayer(before,afterState,gameId,playerKey){
+ if(!sharedMode||!gameId||!playerKey)return;
+ const localAfter=afterState;
+ const localPlayer=localAfter.players.find(p=>p.key===playerKey);
+ const beforePlayer=(before||[]).find(p=>p.key===playerKey);
+ if(!localPlayer)return;
+ const notices=beforePlayer?diffNotifications([beforePlayer],[localPlayer],localAfter.round):[];
+ const newLogs=(localAfter.logs||[]).filter(x=>!(before.logs||[]).includes(x));
+ const gameRef=doc(db,'games',gameId);
+ await runTransaction(db,async tx=>{
+  const snap=await tx.get(gameRef);
+  if(!snap.exists())throw new Error('La partie partagée n’existe plus.');
+  const data=snap.data();
+  const players=Array.isArray(data.players)?data.players.slice():[];
+  const idx=players.findIndex(p=>p.key===playerKey);
+  if(idx<0)throw new Error('Tribu introuvable dans la partie.');
+  players[idx]=localPlayer;
+  const oldNotices=Array.isArray(data.notifications)?data.notifications:[];
+  const notifications=oldNotices.concat(notices).slice(-100);
+  const logs=Array.isArray(data.logs)?data.logs.slice():[];
+  newLogs.forEach(x=>{if(!logs.includes(x))logs.unshift(x);});
+  tx.update(gameRef,{players,logs,notifications});
+ });
+}
+
 function enqueueSharedSync(before,afterState){
-  const gameId=sharedGameId;
-  if(!sharedMode||!sharedMaster||!gameId)return Promise.resolve();
-
-  sharedPendingWrites++;
-
-  // Une erreur Firebase précédente ne doit jamais bloquer les écritures suivantes.
-  const run=sharedWriteQueue.catch(()=>{}).then(async()=>{
-   try{
-    await syncShared(before,afterState,gameId);
-   }finally{
-    sharedPendingWrites=Math.max(0,sharedPendingWrites-1);
-   }
-  });
-
-  sharedWriteQueue=run.catch(e=>{
-   console.error('Synchronisation Firebase Wakam :',e);
-   showEphemeral('⚠️ Synchronisation Firebase impossible. Le jeu continue ; nouvelle tentative au prochain changement.');
-  });
-
-  return run;
+ const gameId=sharedGameId;
+ if(!sharedMode||!gameId)return Promise.resolve();
+ sharedPendingWrites++;
+ const run=sharedWriteQueue.catch(()=>{}).then(async()=>{
+  try{
+   if(sharedMaster) await syncShared(before,afterState,gameId);
+   else await syncSharedPlayer(before,afterState,gameId,sharedPlayerKey);
+  }finally{sharedPendingWrites=Math.max(0,sharedPendingWrites-1);}
+ });
+ sharedWriteQueue=run.catch(e=>{console.error('Synchronisation Firebase Wakam :',e);showEphemeral('⚠️ Synchronisation Firebase impossible.');});
+ return run;
 }
 
 function wrapMutation(name){
  const fn=window[name];
  window[name]=function(...args){
-  if(sharedMode&&!sharedMaster){alert('Seul le maître du jeu peut modifier la partie.');return;}
+  if(sharedMode&&!sharedMaster){
+   const idx=args[0];
+   const p=currentPlayers()[idx];
+   if(!p||p.key!==sharedPlayerKey){alert('Tu peux uniquement modifier ta propre tribu.');return;}
+  }
   const before=snapshotPlayers();
   const result=fn.apply(this,args);
-  const after=sharedMode&&sharedMaster?cloneSharedState():null;
-  const notices=diffNotifications(before,currentPlayers(),state.round);
-  if(!sharedMode){
-   notices.forEach(n=>showEphemeral(n.message));
-  }else if(sharedMaster){
-   notices.filter(n=>n.targetKey===sharedPlayerKey).forEach(n=>showEphemeral(n.message));
+  const after=sharedMode?cloneSharedState():null;
+  if(sharedMode){
+   const notices=diffNotifications(before,currentPlayers(),state.round);
+   notices.filter(n=>n.targetKey===null||n.targetKey===sharedPlayerKey).forEach(n=>showEphemeral(n.message));
+   enqueueSharedSync(before,after);
+  }else{
+   diffNotifications(before,currentPlayers(),state.round).forEach(n=>showEphemeral(n.message));
   }
-  if(sharedMode&&sharedMaster)enqueueSharedSync(before,after);
   return result;
  };
 }
-['setVal','adjust','killVillager','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
+['setVal','adjust','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
 
 window.nextTurn=async function(){
   if(sharedMode){
@@ -1312,19 +1377,25 @@ window.leaveSharedGame=async function(){
  window.render();
 };
 
+function renderOpponentSummary(playerKey){
+ const players=currentPlayers();
+ const opponents=players.filter(p=>p.key!==playerKey);
+ if(!opponents.length)return '';
+ return `<div class="opponentSummary"><b>👁️ Adversaires — en temps réel</b><table class="opponentTable"><thead><tr><th>Tribu</th><th>👥</th><th>🏹</th><th>🐎</th><th>🛶</th></tr></thead><tbody>${opponents.map(p=>`<tr><td>${escapeHtml(p.name||'')}</td><td>${p.villagers||0}</td><td>${p.archers||0}</td><td>${p.cavalry||0}</td><td>${p.canoes||0}</td></tr>`).join('')}</tbody></table></div>`;
+}
 window.render=function(){
  originalRender();
  const s=window.wakamState;
  if(sharedMode){
-  document.getElementById('sharedStatus').innerHTML=
-   `🌐 Partie <b>${sharedGameId}</b> · ${sharedMaster?'<span class="role master">👑 Maître du jeu</span>':'<span class="role">👤 Joueur — lecture seule</span>'}`;
+  document.getElementById('sharedStatus').innerHTML=`🌐 Partie <b>${sharedGameId}</b> · ${sharedMaster?'<span class="role master">👑 Maître du jeu</span>':'<span class="role">👤 Joueur</span>'}`;
   document.getElementById('nextTurnBtn').disabled=!sharedMaster;
   if(!sharedMaster){
-   document.querySelectorAll('#players .card').forEach(card=>{
-    if(!card.classList.contains(sharedPlayerKey))card.style.display='none';
-   });
+   document.querySelectorAll('#players .card').forEach(card=>{if(!card.classList.contains(sharedPlayerKey))card.style.display='none';});
    const card=document.querySelector('#players .card.'+CSS.escape(sharedPlayerKey));
-   if(card)card.querySelectorAll('button,input').forEach(el=>{ if(!el.classList.contains('chiefNameBtn')) el.disabled=true; });
+   if(card){
+    card.insertAdjacentHTML('beforeend',renderOpponentSummary(sharedPlayerKey));
+    card.querySelectorAll('button,input').forEach(el=>{if(!el.classList.contains('chiefNameBtn'))el.disabled=false;});
+   }
   }
   const notice=document.getElementById('eventNotice');
   if(s.currentEventRound!==s.round)notice.innerHTML='';
