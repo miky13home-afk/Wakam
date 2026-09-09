@@ -837,13 +837,12 @@ const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 
 let uid=null;
-let authReadyResolve;
-const authReady=new Promise(resolve=>{authReadyResolve=resolve;});
 let sharedMode=false;
 let sharedMaster=false;
 let sharedGameId=null;
 let sharedPlayerKey=null;
 let sharedUnsub=null;
+let sharedPlayerStatesUnsub=null;
 let seen=new Set();
 let ephemeralTimer=null;
 let pendingSharedCount=0;
@@ -857,7 +856,6 @@ let sharedWriteQueue=Promise.resolve();
 let restoringSharedSession=false;
 onAuthStateChanged(auth,u=>{
  uid=u?.uid||null;
- authReadyResolve(u||null);
  if(uid && !sharedMode && !restoringSharedSession) restoreSharedSession();
 });
 signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisponible :",e));
@@ -930,7 +928,7 @@ window.toggleSharedTribe=function(key){
  if(pendingSharedTribes.includes(key))pendingSharedTribes=pendingSharedTribes.filter(x=>x!==key);
  else if(pendingSharedTribes.length<pendingSharedCount)pendingSharedTribes.push(key);
  TYPES.forEach(t=>{const b=document.getElementById('st_'+t.key);if(b)b.classList.toggle('selected',pendingSharedTribes.includes(t.key));});
- const b=document.getElementById('createSharedBtn');if(b)b.disabled=(pendingSharedTribes.length!==pendingSharedCount);
+ const b=document.getElementById('createSharedBtn');if(b)b.disabled=!(uid&&pendingSharedTribes.length===pendingSharedCount);
 };
 
 function code6(){
@@ -962,23 +960,11 @@ async function restoreSharedSession(){
 }
 
 window.createSharedGame=async function(){
- const btn=document.getElementById('createSharedBtn');
- const box=document.getElementById('sharedSetupDetails');
- if(pendingSharedTribes.length!==pendingSharedCount){
-   alert('Sélectionne le bon nombre de tribus avant de créer la partie.');
-   return;
- }
- if(btn){btn.disabled=true;btn.textContent='Création en cours…';}
- try{
-   if(!uid){
-     const u=await Promise.race([authReady,new Promise(resolve=>setTimeout(()=>resolve(null),10000))]);
-     uid=u?.uid||uid;
-   }
-   if(!uid) throw new Error('AUTH: Firebase n’a pas fourni d’identifiant anonyme.');
-   // Génère un code sans bloquer indéfiniment si une lecture Firestore est refusée.
-   const code=await Promise.race([newCode(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('TIMEOUT: impossible de vérifier la disponibilité du code Firebase.')),10000))]);
-   const players=TYPES.filter(t=>pendingSharedTribes.includes(t.key)).map(freshPlayer);
-   const game={
+ if(!uid){alert('Firebase n’est pas encore connecté. Attends quelques secondes.');return;}
+ if(pendingSharedTribes.length!==pendingSharedCount)return;
+ const code=await newCode();
+ const players=TYPES.filter(t=>pendingSharedTribes.includes(t.key)).map(freshPlayer);
+ const game={
   code,
   masterUid:uid,
   masterPlayerKey:null,
@@ -1001,17 +987,6 @@ window.createSharedGame=async function(){
  <div>Choisis maintenant la tribu que tu joues :</div>
  <div class="choiceGrid">${players.map(p=>`<button class="choice" onclick="claimMaster('${p.key}')">${p.emoji} ${p.name}</button>`).join('')}</div>
  </div>`;
- }catch(e){
-   console.error('Création de partie partagée impossible :',e);
-   if(box){
-     const msg=(e?.message||String(e)).slice(0,300);
-     box.insertAdjacentHTML('beforeend',`<div style="margin-top:10px;color:#b00020"><b>Erreur de création :</b> ${msg}</div>`);
-   }
-   alert('La partie n’a pas pu être créée. Consulte le message affiché sous le bouton.');
- }finally{
-   const b=document.getElementById('createSharedBtn');
-   if(b && !document.querySelector('.codeBox')){b.disabled=(pendingSharedTribes.length!==pendingSharedCount);b.textContent='Créer la partie';}
- }
 };
 
 window.claimMaster=async function(key){
@@ -1075,12 +1050,11 @@ async function enterShared(code,key,isMaster){
 
 function subscribeShared(){
  if(sharedUnsub)sharedUnsub();
+ if(sharedPlayerStatesUnsub)sharedPlayerStatesUnsub();
  sharedUnsub=onSnapshot(doc(db,'games',sharedGameId),snap=>{
   if(!snap.exists()){alert('Cette partie n’existe plus.');return;}
   const g=snap.data();
   sharedMaster=(g.masterUid===uid);
-  // Pendant une écriture du maître, Firebase peut encore nous renvoyer
-  // une ancienne photographie. On ne doit surtout pas écraser le tour local.
   if(sharedPendingWrites>0)return;
 
   window.wakamState={
@@ -1098,6 +1072,29 @@ function subscribeShared(){
   const victory=g.logs?.find(x=>String(x).startsWith('🏆 Victoire de '));
   if(victory && !seen.has('victory:'+g.round)){ seen.add('victory:'+g.round); const w=g.players?.find(p=>victory.includes(p.name)); if(w)showVictoryScreen(w); }
   window.render();
+ });
+
+ // Les joueurs non-maîtres écrivent leur propre tribu dans playerStates/{playerKey}.
+ // Cette sous-collection permet de respecter les règles Firestore : un joueur ne
+ // peut jamais écrire l'état d'une autre tribu.
+ sharedPlayerStatesUnsub=onSnapshot(collection(db,'games',sharedGameId,'playerStates'),snap=>{
+  let changed=false;
+  const players=currentPlayers().slice();
+  snap.docs.forEach(d=>{
+   const data=d.data();
+   if(!data?.playerKey||!data?.player)return;
+   const idx=players.findIndex(p=>p.key===data.playerKey);
+   if(idx<0)return;
+   players[idx]=data.player;
+   changed=true;
+   (data.notifications||[]).forEach(n=>{
+    if(n&&!seen.has(n.id)){seen.add(n.id);showEphemeral(n.message);}
+   });
+  });
+  if(changed){
+   window.wakamState={...window.wakamState,players};
+   window.render();
+  }
  });
 }
 
@@ -1126,7 +1123,7 @@ async function loadChiefNames(g){
 function showNotifications(list){
  for(const n of list){
   if(!n||seen.has(n.id))continue;
-  if(n.targetKey===null || n.targetKey===sharedPlayerKey){
+  if(sharedMode || n.targetKey===null || n.targetKey===sharedPlayerKey){
    seen.add(n.id);showEphemeral(n.message);
   }
  }
@@ -1252,31 +1249,36 @@ async function syncShared(before,afterState,gameId){
    logs:s.logs,
    notifications
   });
+  // Le maître republie l'état de chaque tribu dans sa sous-collection dédiée.
+  // Cela garde les vues des joueurs synchronisées sans leur donner le droit
+  // d'écrire les tribus adverses dans le document principal.
+  await Promise.all((s.players||[]).map(p=>setDoc(
+   doc(db,'games',gameId,'playerStates',p.key),
+   {playerKey:p.key,player:p,updatedAt:serverTimestamp(),updatedBy:uid},
+   {merge:true}
+  )));
 }
 
 async function syncSharedPlayer(before,afterState,gameId,playerKey){
- if(!sharedMode||!gameId||!playerKey)return;
+ if(!sharedMode||!gameId||!playerKey||!uid)return;
  const localAfter=afterState;
  const localPlayer=localAfter.players.find(p=>p.key===playerKey);
  const beforePlayer=(before||[]).find(p=>p.key===playerKey);
  if(!localPlayer)return;
  const notices=beforePlayer?diffNotifications([beforePlayer],[localPlayer],localAfter.round):[];
  const newLogs=(localAfter.logs||[]).filter(x=>!(before.logs||[]).includes(x));
- const gameRef=doc(db,'games',gameId);
- await runTransaction(db,async tx=>{
-  const snap=await tx.get(gameRef);
-  if(!snap.exists())throw new Error('La partie partagée n’existe plus.');
-  const data=snap.data();
-  const players=Array.isArray(data.players)?data.players.slice():[];
-  const idx=players.findIndex(p=>p.key===playerKey);
-  if(idx<0)throw new Error('Tribu introuvable dans la partie.');
-  players[idx]=localPlayer;
-  const oldNotices=Array.isArray(data.notifications)?data.notifications:[];
-  const notifications=oldNotices.concat(notices).slice(-100);
-  const logs=Array.isArray(data.logs)?data.logs.slice():[];
-  newLogs.forEach(x=>{if(!logs.includes(x))logs.unshift(x);});
-  tx.update(gameRef,{players,logs,notifications});
- });
+ const stateRef=doc(db,'games',gameId,'playerStates',playerKey);
+ const memberRef=doc(db,'games',gameId,'members',uid);
+ const memberSnap=await getDoc(memberRef);
+ if(!memberSnap.exists()||memberSnap.data().playerKey!==playerKey)throw new Error('Cette tribu ne vous appartient pas.');
+ await setDoc(stateRef,{
+  playerKey,
+  player:localPlayer,
+  notifications:notices,
+  logs:newLogs,
+  updatedAt:serverTimestamp(),
+  updatedBy:uid
+ },{merge:true});
 }
 
 function enqueueSharedSync(before,afterState){
@@ -1368,7 +1370,9 @@ window.resetGame=function(){
 window.leaveSharedGame=async function(){
  if(!confirm('Quitter cette partie sur cet appareil ?'))return;
  if(sharedUnsub)sharedUnsub();
- sharedUnsub=null;sharedMode=false;sharedMaster=false;sharedGameId=null;sharedPlayerKey=null;seen.clear();
+ if(sharedPlayerStatesUnsub)sharedPlayerStatesUnsub();
+ sharedUnsub=null;
+ sharedPlayerStatesUnsub=null;sharedMode=false;sharedMaster=false;sharedGameId=null;sharedPlayerKey=null;seen.clear();
  sharedTurnBusy=false;sharedPendingWrites=0;sharedWriteQueue=Promise.resolve();
  localStorage.removeItem('wakamSharedSession');
  document.getElementById('leaveSharedBtn').classList.add('hidden');
