@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wakam — Compteur de partie</title>
-<meta name="wakam-version" content="14">
+<meta name="wakam-version" content="15">
 <style>
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f3efe7;color:#2f2a24}
 header{background:#3b3026;color:white;padding:14px 16px;position:sticky;top:0;z-index:2}
@@ -54,6 +54,7 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 .deathModal{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:70;padding:16px}
 .deathCard{background:white;border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 8px 30px #0005}
 .deathCard h3{margin-top:0}.deathCard .field{margin:12px 0}.deathCard select,.deathCard input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:9px}
+.createModal{background:white;border-radius:18px;padding:20px;max-width:420px;width:100%;box-shadow:0 8px 30px #0005;text-align:center}.createModal h3{margin-top:0}.quantityGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0}.quantityGrid button{font-size:18px;padding:12px}.quantityGrid button:disabled{opacity:.3}
 .opponentSummary{margin-top:12px;border-top:1px solid #eee;padding-top:10px}.opponentTable{width:100%;border-collapse:collapse;font-size:12px}.opponentTable th,.opponentTable td{padding:6px 4px;border-bottom:1px solid #eee;text-align:center}.opponentTable th:first-child,.opponentTable td:first-child{text-align:left}
 </style>
 <link rel="manifest" href="manifest.webmanifest">
@@ -77,6 +78,8 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 <div id="ephemeralLayer" class="noticeCenter"></div>
 <div id="victoryOverlay" class="victoryOverlay hidden"></div>
 </main>
+
+<div id="createOverlay" class="overlay hidden"></div>
 
 <div id="deathModal" class="deathModal hidden">
 <div class="deathCard">
@@ -333,35 +336,69 @@ function killVillager(i){openDeathModal(i,'villager');}
 
 function createUnit(i,type){
  const p=state.players[i];
-
+ if(!p)return;
  if(type==='chief'){
   alert('Chaque tribu commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');
   return;
  }
-
  const cost=UNIT_COSTS[type];
  const unitPop=type==='cavalry'?2:(type==='canoe'?0:1);
-
- if(type!=='canoe' && pop(p)+unitPop>housingCapacity(p)){
-  alert('Capacité de logement insuffisante ('+housingCapacity(p)+' habitants). Construisez une habitation supplémentaire.');
+ const availableHousing=type==='canoe'?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
+ const maxByFood=cost[0]>0?Math.floor(p.food/cost[0]):Infinity;
+ const maxByWood=cost[1]>0?Math.floor(p.wood/cost[1]):Infinity;
+ const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood);
+ if(maxAffordable<=0){
+  if(type!=='canoe'&&availableHousing<=0)alert('Capacité de logement insuffisante. Construisez une habitation supplémentaire.');
+  else alert('Ressources insuffisantes.');
   return;
  }
+ openCreateQuantityModal(i,type,maxAffordable);
+}
 
- if(p.food<cost[0]||p.wood<cost[1]){
-  alert('Ressources insuffisantes');
-  return;
- }
+function openCreateQuantityModal(i,type,maxAffordable){
+ const overlay=document.getElementById('createOverlay');
+ if(!overlay)return;
+ const label=labelUnit(type);
+ overlay.innerHTML=`<div class="createModal">
+  <h3>Créer ${label}${label==='villageois'?'':maxAffordable>1?'s':''}</h3>
+  <div>Choisissez directement le nombre :</div>
+  <div class="quantityGrid">${Array.from({length:10},(_,n)=>{const q=n+1;return `<button ${q>maxAffordable?'disabled':''} onclick="confirmCreateUnit(${i},'${type}',${q})">${q}</button>`;}).join('')}</div>
+  <div class="mini">Maximum disponible : ${maxAffordable}</div>
+  <div class="deathActions"><button class="secondary" onclick="closeCreateQuantityModal()">Annuler</button></div>
+ </div>`;
+ overlay.classList.remove('hidden');
+}
 
- p.food-=cost[0];
- p.wood-=cost[1];
+function closeCreateQuantityModal(){
+ const overlay=document.getElementById('createOverlay');
+ if(overlay){overlay.classList.add('hidden');overlay.innerHTML='';}
+}
 
- if(type==='villager')p.villagers++;
- if(type==='archer')p.archers++;
- if(type==='cavalry')p.cavalry++;
- if(type==='canoe')p.canoes++;
-
- log(p.emoji+' '+p.name+': création '+labelUnit(type));
+function confirmCreateUnit(i,type,quantity){
+ const before=JSON.parse(JSON.stringify(state.players));
+ const p=state.players[i];
+ if(!p||!Number.isInteger(quantity)||quantity<1)return;
+ const cost=UNIT_COSTS[type];
+ const unitPop=type==='cavalry'?2:(type==='canoe'?0:1);
+ const availableHousing=type==='canoe'?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
+ const maxByFood=cost[0]>0?Math.floor(p.food/cost[0]):Infinity;
+ const maxByWood=cost[1]>0?Math.floor(p.wood/cost[1]):Infinity;
+ const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood);
+ if(quantity>maxAffordable){alert('Cette quantité n’est plus disponible.');closeCreateQuantityModal();return;}
+ p.food-=cost[0]*quantity;
+ p.wood-=cost[1]*quantity;
+ if(type==='villager')p.villagers+=quantity;
+ if(type==='archer')p.archers+=quantity;
+ if(type==='cavalry')p.cavalry+=quantity;
+ if(type==='canoe')p.canoes+=quantity;
+ const createdLabel=type==='villager'?'villageois':labelUnit(type)+(quantity>1?'s':'');
+ log(p.emoji+' '+p.name+': création de '+quantity+' '+createdLabel);
+ closeCreateQuantityModal();
  render();
+ const after=JSON.parse(JSON.stringify(currentPlayers()));
+ const notices=diffNotifications(before,after,state.round);
+ notices.forEach(n=>showEphemeral(n.message));
+ if(window.wakamSyncAfterCreate)window.wakamSyncAfterCreate(before,after);
 }
 
 function labelUnit(type){
@@ -1088,7 +1125,13 @@ function subscribeShared(){
    players[idx]=data.player;
    changed=true;
    (data.notifications||[]).forEach(n=>{
-    if(n&&!seen.has(n.id)){seen.add(n.id);showEphemeral(n.message);}
+    if(!n||seen.has(n.id))return;
+    // Les créations sont privées à la tribu ciblée ; les morts/destructions
+    // sont publiques et utilisent targetKey === null.
+    if(n.targetKey===null || n.targetKey===sharedPlayerKey){
+     seen.add(n.id);
+     showEphemeral(n.message);
+    }
    });
   });
   if(changed){
@@ -1123,7 +1166,8 @@ async function loadChiefNames(g){
 function showNotifications(list){
  for(const n of list){
   if(!n||seen.has(n.id))continue;
-  if(sharedMode || n.targetKey===null || n.targetKey===sharedPlayerKey){
+  // targetKey === null = notification publique ; sinon seule la tribu ciblée.
+  if(n.targetKey===null || n.targetKey===sharedPlayerKey){
    seen.add(n.id);showEphemeral(n.message);
   }
  }
@@ -1157,7 +1201,10 @@ function diffNotifications(before,after,round){
   const units=[['villagers','villageois'],['archers','archer'],['cavalry','cavalier'],['canoes','canoë']];
   units.forEach(([k,label])=>{
    const d=(p[k]||0)-(b[k]||0);
-   if(d>0)add(`+${d} ${label}${d>1?'s':''} créé${d>1?'s':''}`);
+   if(d>0){
+    const pluralLabel=k==='villagers'?'villageois':label+(d>1?'s':'');
+    add(`+${d} ${pluralLabel} créé${d>1?'s':''}`);
+   }
    if(d<0){
     let extra='';
     if(k==='villagers'){
@@ -1165,14 +1212,32 @@ function diffNotifications(before,after,round){
       if(changes.length===1)extra=` — affectation : ${changes[0].l}`;
       else if(changes.length>1)extra=` — affectations modifiées`;
     }
-    add(`☠️ ${Math.abs(d)} ${label}${Math.abs(d)>1?'s':''} mort${Math.abs(d)>1?'s':''}${extra}`,null);
+    const count=Math.abs(d);
+     const verb=count>1?'sont morts':'est mort';
+     const unitName=label+(count>1?'s':'');
+     add(`☠️ ${count} ${unitName} ${p.name.toLowerCase()} ${verb}${extra}`,null);
    }
   });
   const buildings=new Set([...Object.keys(b.buildings||{}),...Object.keys(p.buildings||{})]);
   buildings.forEach(k=>{
    const d=(p.buildings?.[k]||0)-(b.buildings?.[k]||0);
    if(d>0)add(`🏗️ ${d>1?d+' ':''}${k} créé${d>1?'s':''}`);
-   if(d<0)add(`💥 ${Math.abs(d)>1?Math.abs(d)+' ':''}${k} détruit${Math.abs(d)>1?'s':''}`);
+   if(d<0){
+    const count=Math.abs(d);
+    const info={
+     'Écurie':['Une','Écuries','détruites'],
+     'Grand archer':['Un','Grands archers','détruits'],
+     'Port':['Un','Ports','détruits'],
+     'Pont':['Un','Ponts','détruits'],
+     'Habitation':['Une','Habitations','détruites'],
+     'Foyer':['Un','Foyers','détruits'],
+     'Totem':['Un','Totems','détruits']
+    }[k]||['Un',k+'s','détruits'];
+    const text=count>1
+     ? `💥 ${count} ${info[1]} ${p.name.toLowerCase()} ont été ${info[2]}.`
+     : `💥 ${info[0]} ${k.toLowerCase()} ${p.name.toLowerCase()} a été ${info[2]}.`;
+    add(text,null);
+   }
   });
   if(!!p.upgrades?.archer&&!b.upgrades?.archer)add('🏹 Amélioration des archers : déplacement 2 tuiles');
   if(!!p.upgrades?.cavalry&&!b.upgrades?.cavalry)add('🐎 Amélioration des cavaliers : déplacement 3 tuiles');
@@ -1271,11 +1336,15 @@ async function syncSharedPlayer(before,afterState,gameId,playerKey){
  const memberRef=doc(db,'games',gameId,'members',uid);
  const memberSnap=await getDoc(memberRef);
  if(!memberSnap.exists()||memberSnap.data().playerKey!==playerKey)throw new Error('Cette tribu ne vous appartient pas.');
+ const previous=await getDoc(stateRef);
+ const oldData=previous.exists()?previous.data():{};
+ const oldNotices=Array.isArray(oldData.notifications)?oldData.notifications:[];
+ const oldLogs=Array.isArray(oldData.logs)?oldData.logs:[];
  await setDoc(stateRef,{
   playerKey,
   player:localPlayer,
-  notifications:notices,
-  logs:newLogs,
+  notifications:oldNotices.concat(notices).slice(-100),
+  logs:oldLogs.concat(newLogs).slice(-100),
   updatedAt:serverTimestamp(),
   updatedBy:uid
  },{merge:true});
@@ -1294,6 +1363,15 @@ function enqueueSharedSync(before,afterState){
  sharedWriteQueue=run.catch(e=>{console.error('Synchronisation Firebase Wakam :',e);showEphemeral('⚠️ Synchronisation Firebase impossible.');});
  return run;
 }
+
+// Pont entre le script principal et le module Firebase : la fenêtre de création
+// peut ainsi fonctionner en mode partagé sans accéder directement aux variables du module.
+window.wakamSyncAfterCreate=async function(before,after){
+ if(!sharedMode)return;
+ const notices=diffNotifications(before,after,state.round);
+ notices.filter(n=>n.targetKey===null||n.targetKey===sharedPlayerKey).forEach(n=>{seen.add(n.id);showEphemeral(n.message);});
+ await enqueueSharedSync(before,after);
+};
 
 function wrapMutation(name){
  const fn=window[name];
@@ -1316,45 +1394,50 @@ function wrapMutation(name){
   return result;
  };
 }
-['setVal','adjust','createUnit','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
+['setVal','adjust','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
+
+// La mort des unités passe par une fenêtre de confirmation : la synchronisation
+// doit donc se faire au moment où la mort est réellement confirmée.
+const originalConfirmDeathModal=window.confirmDeathModal;
+window.confirmDeathModal=async function(){
+ const before=snapshotPlayers();
+ const result=originalConfirmDeathModal.apply(this,arguments);
+ const after=sharedMode?cloneSharedState():null;
+
+ if(sharedMode){
+  const notices=diffNotifications(before,currentPlayers(),state.round);
+  notices.filter(n=>n.targetKey===null||n.targetKey===sharedPlayerKey).forEach(n=>{
+   seen.add(n.id);
+   showEphemeral(n.message);
+  });
+  await enqueueSharedSync(before,after);
+ }
+ return result;
+};
 
 window.nextTurn=async function(){
-  if(sharedMode){
-   if(!sharedMaster){alert('Seul le maître du jeu peut passer au tour suivant.');return;}
-   // Le verrou protège uniquement contre les doubles clics.
-   // Il est toujours libéré dans finally, même si Firebase échoue.
-   if(sharedTurnBusy)return;
-
-   sharedTurnBusy=true;
-   const btn=document.getElementById('nextTurnBtn');
-   if(btn)btn.disabled=true;
-
-   const before=snapshotPlayers();
-
-   try{
-    // Le tour avance d'abord dans le moteur local.
-    originalNextTurn();
-    const after=cloneSharedState();
-
-    // Une panne Firebase ne doit pas transformer un tour réussi
-    // en "passage de tour impossible".
-    try{
-     await enqueueSharedSync(before,after);
-    }catch(e){
-     console.error('Synchronisation Firebase Wakam :',e);
-     showEphemeral('⚠️ Synchronisation Firebase impossible. Le tour a quand même avancé.');
-    }
-   }catch(e){
-    console.error('Passage de tour Wakam :',e);
-    showEphemeral('⚠️ Erreur pendant le passage de tour.');
-   }finally{
-    sharedTurnBusy=false;
-    if(btn)btn.disabled=!sharedMaster;
-    window.render();
-   }
-   return;
+ if(sharedMode){
+  if(!sharedMaster){alert('Seul le maître du jeu peut passer au tour suivant.');return;}
+  if(sharedTurnBusy)return;
+  sharedTurnBusy=true;
+  const btn=document.getElementById('nextTurnBtn');
+  if(btn)btn.disabled=true;
+  const before=snapshotPlayers();
+  try{
+   originalNextTurn();
+   const after=cloneSharedState();
+   await enqueueSharedSync(before,after,sharedPlayerKey);
+  }catch(e){
+   console.error('Passage de tour Wakam :',e);
+   showEphemeral('⚠️ Erreur pendant le passage de tour.');
+  }finally{
+   sharedTurnBusy=false;
+   if(btn)btn.disabled=!sharedMaster;
+   window.render();
   }
-  return originalNextTurn();
+  return;
+ }
+ return originalNextTurn();
 };
 
 window.saveGame=function(){
