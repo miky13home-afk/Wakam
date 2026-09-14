@@ -16,7 +16,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .round{font-size:20px;font-weight:800;margin:8px 0 12px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
 .card{background:white;border-radius:16px;padding:14px;box-shadow:0 2px 10px #0001;border-top:7px solid #777}
-.card.red{border-color:#b33a36}.card.yellow{border-color:#d6ad22}.card.purple{border-color:#7b4aa5}.card.blue{border-color:#3f76b5}.card.green{border-color:#4f9d55}.card.orange{border-color:#d8782a}
+.card.red{border-color:#b33a36}.card.yellow{border-color:#d6ad22}.card.purple{border-color:#7b4aa5}.card.blue{border-color:#3f76b5}.card.cowboy-yellow{border-color:#d6ad22}.card.cowboy-blue{border-color:#3f76b5}.card.cowboy-green{border-color:#6da63c}.card.cowboy-red{border-color:#b33a36}.card.green{border-color:#4f9d55}.card.orange{border-color:#d8782a}
 .card h2{margin:0 0 8px}.row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px}
 .val{font-size:20px;font-weight:800}.mini{font-size:12px;color:#6e6257}
 section{border-top:1px solid #eee;margin-top:10px;padding-top:8px}
@@ -124,15 +124,19 @@ input{width:65px;padding:7px;border:1px solid #ccc;border-radius:8px}
 
 <script>
 const TYPES=[
- {key:'red',name:'Iroquois',emoji:'🔴'},
- {key:'yellow',name:'Cheyennes',emoji:'🟡'},
- {key:'purple',name:'Lakota',emoji:'🟣'},
- {key:'blue',name:'Cherokee',emoji:'🔵'},
- {key:'green',name:'Comanche',emoji:'🟢'},
- {key:'orange',name:'Apache',emoji:'🟠'}
+ {key:'red',name:'Iroquois',emoji:'🔴',faction:'indian'},
+ {key:'yellow',name:'Cheyennes',emoji:'🟡',faction:'indian'},
+ {key:'purple',name:'Lakota',emoji:'🟣',faction:'indian'},
+ {key:'blue',name:'Cherokee',emoji:'🔵',faction:'indian'},
+ {key:'green',name:'Comanche',emoji:'🟢',faction:'indian'},
+ {key:'orange',name:'Apache',emoji:'🟠',faction:'indian'},
+ {key:'cowboy-yellow',name:'Texas',emoji:'🟡',faction:'cowboy'},
+ {key:'cowboy-blue',name:'Colorado',emoji:'🔵',faction:'cowboy'},
+ {key:'cowboy-green',name:'Montana',emoji:'🟢',faction:'cowboy'},
+ {key:'cowboy-red',name:'Arizona',emoji:'🔴',faction:'cowboy'}
 ];
 
-const BUILDINGS=[
+const INDIAN_BUILDINGS=[
  ['Écurie',300,200],
  ['Cabane des archers',300,200],
  ['Port',300,200],
@@ -142,12 +146,41 @@ const BUILDINGS=[
  ['Totem',400,0]
 ];
 
+const COWBOY_BUILDINGS=[
+ ['Ranch',300,200],
+ ['Cabane de munitions',300,200],
+ ['Port',300,200],
+ ['Pont',400,200],
+ ['Tente',200,50],
+ ['Centre ville',300,300],
+ ['Mine',150,50],
+ ['Saloon',200,100]
+];
+
 const UNIT_COSTS={
  villager:[50,0],
  archer:[50,50],
  cavalry:[150,50],
  canoe:[0,100]
 };
+
+function isCowboy(p){return p?.faction==='cowboy';}
+function buildingList(p){return isCowboy(p)?COWBOY_BUILDINGS:INDIAN_BUILDINGS;}
+function buildingHomeName(p){return isCowboy(p)?'Centre ville':'Foyer';}
+function housingName(p){return isCowboy(p)?'Tente':'Habitation';}
+function workerName(p){return isCowboy(p)?'Colons':'Villageois';}
+function unitLabel(p,type,plural=false){
+ const labels=isCowboy(p)?{villager:'colon',archer:'cowboy',cavalry:'cowboy à cheval',canoe:'barque'}:{villager:'villageois',archer:'archer',cavalry:'cavalier',canoe:'canoë'};
+ const l=labels[type]||type;
+ return plural?(l==='cowboy à cheval'||l==='villageois'||l==='cavalier'||l==='canoë'||l==='barque'||l==='colon'?l+'s':l+'s'):l;
+}
+function unitPop(p,type){return type==='cavalry'?2:(type==='canoe'?0:1);}
+function militaryCount(p){return isCowboy(p)?(p.archers||0)+(p.cavalry||0):0;}
+function metalMaintenance(p){return isCowboy(p)?Math.ceil(militaryCount(p)/5)*50:0;}
+function unitCostsFor(p,type){
+ if(isCowboy(p))return type==='villager'?{food:50,wood:0,metal:0}:type==='archer'?{food:50,wood:0,metal:50}:type==='cavalry'?{food:150,wood:0,metal:50}:{food:0,wood:100,metal:0};
+ return type==='villager'?{food:50,wood:0,metal:0}:type==='archer'?{food:50,wood:50,metal:0}:type==='cavalry'?{food:150,wood:50,metal:0}:{food:0,wood:100,metal:0};
+}
 
 /* Épuisement :
    - forêt ET carrière ont chacune leur propre calendrier ;
@@ -194,11 +227,13 @@ function freshPlayer(t){
  return {
   ...t,
   food:250,wood:0,stone:0,gold:0,
+  faction:t.faction||'indian',
   chief:1,chiefName:'',villagers:0,archers:0,cavalry:0,canoes:0,
-  workFood:0,workWood:0,workStone:0,
-  buildings:{Foyer:1},
+  workFood:0,workWood:0,workStone:0,workMetal:0,
+  buildings:{[t.faction==='cowboy'?'Centre ville':'Foyer']:1},
   upgrades:{archer:false,cavalry:false,archerElite:false,cavalryArcher:false},
-  defeated:false
+  defeated:false,
+  saloonRecruitRound:0
  };
 }
 
@@ -207,11 +242,14 @@ function pop(p){
 }
 
 function housingCapacity(p){
- return 10+(p.buildings['Habitation']||0)*10;
+ const housing=(p.buildings[housingName(p)]||0)*10;
+ const townCenter=isCowboy(p)?(p.buildings['Centre ville']||0)*5:0;
+ return 10+housing+townCenter;
 }
 
 function requiredHouses(p){
- return Math.max(0,Math.ceil(pop(p)/10)-1);
+ const deficit=Math.max(0,pop(p)-housingCapacity(p));
+ return Math.ceil(deficit/10);
 }
 
 function foodCost(p){
@@ -223,7 +261,7 @@ function canoeIncome(p){
 }
 
 function totalWorkers(p){
- return p.workFood+p.workWood+p.workStone;
+ return p.workFood+p.workWood+p.workStone+(isCowboy(p)?p.workMetal:0);
 }
 
 function totalBuildingCount(p){
@@ -243,7 +281,7 @@ function selectPlayerCount(n){
  selectedTribes=[];
  document.querySelectorAll('[data-count]').forEach(b=>b.classList.toggle('selected',+b.dataset.count===n));
  const box=document.getElementById('tribeChoices');
- box.innerHTML=TYPES.map(t=>`<button class="choice" id="tribe_${t.key}" onclick="toggleTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('');
+ box.innerHTML=`<div style="grid-column:1/-1;font-weight:800;margin-top:4px">🪶 Nations amérindiennes</div>${TYPES.filter(t=>t.faction==='indian').map(t=>`<button class="choice" id="tribe_${t.key}" onclick="toggleTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('')}<div style="grid-column:1/-1;font-weight:800;margin-top:8px">🤠 Cow-boys</div>${TYPES.filter(t=>t.faction==='cowboy').map(t=>`<button class="choice" id="tribe_${t.key}" onclick="toggleTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('')}`;
  updateSetup();
 }
 
@@ -281,7 +319,7 @@ function startGame(){
 function setVal(i,key,v){
  const p=state.players[i];
  let nv=Math.max(0,parseInt(v)||0);
- if(['workFood','workWood','workStone'].includes(key)){
+ if(['workFood','workWood','workStone','workMetal'].includes(key)){
   const other=totalWorkers(p)-(p[key]||0);
   nv=Math.min(nv,Math.max(0,p.villagers-other));
  }
@@ -291,7 +329,7 @@ function setVal(i,key,v){
 
 function adjust(i,key,d){
  const p=state.players[i];
- if(['workFood','workWood','workStone'].includes(key) && d>0 && totalWorkers(p)>=p.villagers){
+ if(['workFood','workWood','workStone','workMetal'].includes(key) && d>0 && totalWorkers(p)>=p.villagers){
   alert('Tous les villageois disponibles sont déjà affectés à un travail.');
   return;
  }
@@ -306,13 +344,13 @@ function openDeathModal(i,type){
  const max=Number(p[key]||0);
  if(max<=0){alert(type==='villager'?'Aucun villageois disponible.':'Aucune unité disponible.');return;}
  window.deathModalState={i,type,max};
- document.getElementById('deathModalTitle').textContent=(type==='villager'?'Villageois morts':` ${labelUnit(type)}s morts`);
+ document.getElementById('deathModalTitle').textContent=(type==='villager'?(isCowboy(p)?'Colons morts':'Villageois morts'):` ${unitLabel(p,type,true)} morts`);
  const input=document.getElementById('deathCountInput'); input.max=max; input.value=1;
  const af=document.getElementById('deathAssignmentField');
  af.classList.toggle('hidden',type!=='villager');
  if(type==='villager'){
   const sel=document.getElementById('deathAssignmentSelect');
-  sel.innerHTML=`<option value="workFood">🌽 Nourriture (${p.workFood})</option><option value="workWood">🪵 Bois (${p.workWood})</option><option value="workStone">🪨 Pierre (${p.workStone})</option><option value="none">👤 Sans affectation (${Math.max(0,p.villagers-p.workFood-p.workWood-p.workStone)})</option>`;
+  sel.innerHTML=`<option value="workFood">🌽 Nourriture (${p.workFood})</option><option value="workWood">🪵 Bois (${p.workWood})</option><option value="workStone">🪨 Pierre (${p.workStone})</option>${isCowboy(p)?`<option value="workMetal">⚙️ Métal (${p.workMetal||0})</option>`:''}<option value="none">👤 Sans affectation (${Math.max(0,p.villagers-totalWorkers(p))})</option>`;
  }
  document.getElementById('deathModal').classList.remove('hidden');
 }
@@ -323,13 +361,13 @@ function confirmDeathModal(){
  if(n>st.max){alert(`Maximum : ${st.max}.`);return;}
  if(st.type==='villager'){
   const work=document.getElementById('deathAssignmentSelect').value;
-  const available=work==='workFood'?p.workFood:work==='workWood'?p.workWood:work==='workStone'?p.workStone:p.villagers-p.workFood-p.workWood-p.workStone;
+  const available=work==='workFood'?p.workFood:work==='workWood'?p.workWood:work==='workStone'?p.workStone:work==='workMetal'?(p.workMetal||0):p.villagers-totalWorkers(p);
   if(n>available){alert(`Il n'y a que ${Math.max(0,available)} villageois dans cette affectation.`);return;}
   p.villagers-=n; if(work!=='none')p[work]-=n;
  }else{
   const key=st.type==='archer'?'archers':st.type==='cavalry'?'cavalry':st.type==='canoe'?'canoes':'chief';
   p[key]=Math.max(0,(p[key]||0)-n);
-  if(st.type==='chief') eliminatePlayer(p,'le chef est mort');
+  if(st.type==='chief') eliminatePlayer(p,isCowboy(p)?'le Shérif est mort':'le chef est mort');
  }
  closeDeathModal();
  checkVictory(); render();
@@ -340,27 +378,46 @@ function createUnit(i,type){
  const p=state.players[i];
  if(!p)return;
  if(type==='chief'){
-  alert('Chaque tribu commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');
+  alert('Chaque camp commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');
   return;
  }
- const cost=UNIT_COSTS[type];
- const unitPop=type==='cavalry'?2:(type==='canoe'?0:1);
- const availableHousing=type==='canoe'?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
- const maxByFood=cost[0]>0?Math.floor(p.food/cost[0]):Infinity;
- const maxByWood=cost[1]>0?Math.floor(p.wood/cost[1]):Infinity;
- const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood);
+ const cost=unitCostsFor(p,type);
+ const unitPop=unitPopForCreation(p,type);
+ const availableHousing=unitPop===0?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
+ const maxByFood=cost.food>0?Math.floor(p.food/cost.food):Infinity;
+ const maxByWood=cost.wood>0?Math.floor(p.wood/cost.wood):Infinity;
+ const maxByMetal=cost.metal>0?Math.floor((p.metal||0)/cost.metal):Infinity;
+ const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal);
  if(maxAffordable<=0){
-  if(type!=='canoe'&&availableHousing<=0)alert('Capacité de logement insuffisante. Construisez une habitation supplémentaire.');
+  if(unitPop>0&&availableHousing<=0)alert(`Capacité de logement insuffisante. Construisez une ${housingName(p).toLowerCase()} supplémentaire.`);
   else alert('Ressources insuffisantes.');
   return;
  }
  openCreateQuantityModal(i,type,maxAffordable);
 }
 
+
+function recruitSaloonCowboy(i){
+ const p=state.players[i];
+ if(!p||!isCowboy(p))return;
+ if((p.buildings?.['Saloon']||0)<=0){alert('Construisez un Saloon pour recruter un Cowboy.');return;}
+ if(p.saloonRecruitRound===state.round){alert('Le Saloon a déjà recruté un Cowboy ce tour.');return;}
+ if(pop(p)>=housingCapacity(p)){alert('Capacité de logement insuffisante.');return;}
+ if(p.food<50){alert('Ressources insuffisantes : il faut 50 nourriture.');return;}
+ p.food-=50;
+ p.archers=(p.archers||0)+1;
+ p.saloonRecruitRound=state.round;
+ log(`🍺 ${p.name}: recrutement d'un Cowboy au Saloon (-50 nourriture)`);
+ render();
+}
+
+function unitPopForCreation(p,type){return unitPop(p,type);}
+
 function openCreateQuantityModal(i,type,maxAffordable){
+ const p=state.players[i];
  const overlay=document.getElementById('createOverlay');
  if(!overlay)return;
- const label=labelUnit(type);
+ const label=unitLabel(p,type);
  overlay.innerHTML=`<div class="createModal">
   <h3>Créer ${label}${label==='villageois'?'':maxAffordable>1?'s':''}</h3>
   <div>Choisissez directement le nombre :</div>
@@ -380,20 +437,22 @@ function confirmCreateUnit(i,type,quantity){
  const before=JSON.parse(JSON.stringify(state.players));
  const p=state.players[i];
  if(!p||!Number.isInteger(quantity)||quantity<1)return;
- const cost=UNIT_COSTS[type];
- const unitPop=type==='cavalry'?2:(type==='canoe'?0:1);
- const availableHousing=type==='canoe'?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
- const maxByFood=cost[0]>0?Math.floor(p.food/cost[0]):Infinity;
- const maxByWood=cost[1]>0?Math.floor(p.wood/cost[1]):Infinity;
- const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood);
+ const cost=unitCostsFor(p,type);
+ const unitPop=unitPopForCreation(p,type);
+ const availableHousing=unitPop===0?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
+ const maxByFood=cost.food>0?Math.floor(p.food/cost.food):Infinity;
+ const maxByWood=cost.wood>0?Math.floor(p.wood/cost.wood):Infinity;
+ const maxByMetal=cost.metal>0?Math.floor((p.metal||0)/cost.metal):Infinity;
+ const maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal);
  if(quantity>maxAffordable){alert('Cette quantité n’est plus disponible.');closeCreateQuantityModal();return;}
- p.food-=cost[0]*quantity;
- p.wood-=cost[1]*quantity;
+ p.food-=cost.food*quantity;
+ p.wood-=cost.wood*quantity;
+ p.metal=(p.metal||0)-cost.metal*quantity;
  if(type==='villager')p.villagers+=quantity;
  if(type==='archer')p.archers+=quantity;
  if(type==='cavalry')p.cavalry+=quantity;
  if(type==='canoe')p.canoes+=quantity;
- const createdLabel=type==='villager'?'villageois':labelUnit(type)+(quantity>1?'s':'');
+ const createdLabel=unitLabel(p,type,quantity>1);
  log(p.emoji+' '+p.name+': création de '+quantity+' '+createdLabel);
  closeCreateQuantityModal();
  render();
@@ -404,9 +463,7 @@ function confirmCreateUnit(i,type,quantity){
 }
 
 function labelUnit(type){
- return type==='villager'?'villageois':
-        type==='archer'?'archer':
-        type==='cavalry'?'cavalier':'canoë';
+ return type==='villager'?'villageois':type==='archer'?'archer':type==='cavalry'?'cavalier':'canoë';
 }
 
 function killUnit(i,type){
@@ -416,7 +473,7 @@ function killUnit(i,type){
  if(type==='chief'){
   if(!p.chief)return;
   p.chief=0;
-  eliminatePlayer(p,'le chef est mort');
+  eliminatePlayer(p,isCowboy(p)?'le Shérif est mort':'le chef est mort');
  }
 }
 
@@ -430,7 +487,7 @@ function eliminatePlayer(p,reason){
 
 function build(i,n){
  const p=state.players[i];
- const b=BUILDINGS[n];
+ const b=buildingList(p)[n];
  const wood=b[1],stone=b[2];
 
  if(p.wood<wood||p.stone<stone){
@@ -454,12 +511,12 @@ function destroyBuilding(i,name){
 
  log('💥 '+p.name+': destruction de '+name+'.');
 
- if(name==='Foyer' && p.buildings['Foyer']<=0){
-  eliminatePlayer(p,'le dernier foyer a été détruit');
+ if(name===buildingHomeName(p) && p.buildings[buildingHomeName(p)]<=0){
+  eliminatePlayer(p,isCowboy(p)?'le dernier Centre ville a été détruit':'le dernier Foyer a été détruit');
   return;
  }
 
- if(name==='Habitation' && pop(p)>housingCapacity(p)){
+ if(name===housingName(p) && pop(p)>housingCapacity(p)){
   alert('Attention : la population dépasse maintenant la capacité de logement.');
  }
 
@@ -486,22 +543,22 @@ function upgradeArcher(i){
  const p=state.players[i];
  if(p.upgrades.archer)return;
  if(p.gold<100){
-  alert('Il faut 100 or pour améliorer les archers.');
+  alert('Il faut 100 or pour améliorer les unités à pied.');
   return;
  }
  p.gold-=100;
  p.upgrades.archer=true;
- log(`${p.emoji} ${p.name}: archers améliorés — déplacement 2 tuiles`);
+ log(`${p.emoji} ${p.name}: ${isCowboy(p)?'cowboys':'archers'} améliorés — déplacement 2 tuiles`);
  render();
 }
 
 function upgradeArcherElite(i){
  const p=state.players[i];
   if(p.upgrades.archerElite)return;
- if(p.gold<200){alert('Il faut 200 or pour les archers d’élite.');return;}
+ if(p.gold<200){alert('Il faut 200 or pour les unités d’élite.');return;}
  p.gold-=200;
  p.upgrades.archerElite=true;
- log(`${p.emoji} ${p.name}: archers d’élite — portée d’attaque 3 tuiles`);
+ log(`${p.emoji} ${p.name}: ${isCowboy(p)?'cowboys d’élite':'archers d’élite'} — portée d’attaque 3 tuiles`);
  render();
 }
 
@@ -509,22 +566,22 @@ function upgradeCavalry(i){
  const p=state.players[i];
  if(p.upgrades.cavalry)return;
  if(p.gold<100){
-  alert('Il faut 100 or pour améliorer les cavaliers.');
+  alert('Il faut 100 or pour améliorer les unités montées.');
   return;
  }
  p.gold-=100;
  p.upgrades.cavalry=true;
- log(`${p.emoji} ${p.name}: cavaliers améliorés — déplacement 3 tuiles`);
+ log(`${p.emoji} ${p.name}: ${isCowboy(p)?'cowboys à cheval':'cavaliers'} améliorés — déplacement 3 tuiles`);
  render();
 }
 
 function upgradeCavalryArcher(i){
  const p=state.players[i];
   if(p.upgrades.cavalryArcher)return;
- if(p.gold<200){alert('Il faut 200 or pour les cavaliers archers.');return;}
+ if(p.gold<200){alert('Il faut 200 or pour les unités montées expérimentées.');return;}
  p.gold-=200;
  p.upgrades.cavalryArcher=true;
- log(`${p.emoji} ${p.name}: cavaliers archers — attaque à distance 2 tuiles`);
+ log(`${p.emoji} ${p.name}: ${isCowboy(p)?'cowboy à cheval expérimenté':'cavaliers archers'} — ${isCowboy(p)?'portée d’attaque 3 tuiles':'attaque à distance 2 tuiles'}`);
  render();
 }
 
@@ -541,11 +598,13 @@ function applyTurnProduction(){
   const pf=p.workFood*50;
   const pw=p.workWood*50;
   const ps=p.workStone*50;
+  const pm=isCowboy(p)?(p.workMetal||0)*50:0;
   const pc=canoeIncome(p);
 
   p.food+=pf+pc;
   p.wood+=pw;
   p.stone+=ps;
+  if(isCowboy(p))p.metal=(p.metal||0)+pm;
 
   const maintenance=buildingMaintenance(p);
   const paidWood=Math.min(p.wood,maintenance);
@@ -557,10 +616,21 @@ function applyTurnProduction(){
    log(`${p.emoji} ${p.name}: -${maintenance} 🪵 d'entretien des bâtiments.`);
   }
 
+  const militaryMetal=metalMaintenance(p);
+  const paidMetal=Math.min(p.metal||0,militaryMetal);
+  if(isCowboy){
+   p.metal=(p.metal||0)-paidMetal;
+   if(paidMetal<militaryMetal){
+    log(`⚠️ ${p.emoji} ${p.name}: manque ${militaryMetal-paidMetal} métal pour l'entretien militaire (${militaryMetal} ⚙️ requis).`);
+   }else if(militaryMetal>0){
+    log(`${p.emoji} ${p.name}: -${militaryMetal} ⚙️ d'entretien militaire.`);
+   }
+  }
+
   const fc=foodCost(p);
   p.food=Math.max(0,p.food-fc);
 
-  log(`${p.emoji} ${p.name}: T${state.round} +${pf} nourriture, +${pc} canoës, +${pw} bois, +${ps} pierre, -${fc} nourriture`);
+  log(`${p.emoji} ${p.name}: T${state.round} +${pf} nourriture, +${pc} ${isCowboy(p)?'barques':'canoës'}, +${pw} bois, +${ps} pierre${isCowboy(p)?`, +${pm} métal`:''}, -${fc} nourriture`);
  });
 }
 
@@ -674,6 +744,8 @@ function normalizeLoadedState(){
 
  state.players.forEach(p=>{
   if(typeof p.gold!=='number')p.gold=0;
+  if(!p.faction)p.faction=(String(p.key||'').startsWith('cowboy-')?'cowboy':'indian');
+  if(isCowboy(p)&&typeof p.metal!=='number')p.metal=0;
   if(!p.upgrades)p.upgrades={archer:false,cavalry:false,archerElite:false,cavalryArcher:false};
   if(typeof p.upgrades.archer!=='boolean')p.upgrades.archer=false;
   if(typeof p.upgrades.cavalry!=='boolean')p.upgrades.cavalry=false;
@@ -686,11 +758,11 @@ function normalizeLoadedState(){
   if(typeof p.workFood!=='number')p.workFood=0;
   if(typeof p.workWood!=='number')p.workWood=0;
   if(typeof p.workStone!=='number')p.workStone=0;
-  if(!p.buildings)p.buildings={Foyer:1};
-  if(typeof p.buildings.Foyer!=='number')p.buildings.Foyer=1;
-
-  /* Compatibilité avec une ancienne sauvegarde sans Foyer explicite. */
-  if(p.buildings.Foyer<0)p.buildings.Foyer=0;
+  if(typeof p.workMetal!=='number')p.workMetal=0;
+  if(!p.buildings)p.buildings={[buildingHomeName(p)]:1};
+  const home=buildingHomeName(p);
+  if(typeof p.buildings[home]!=='number')p.buildings[home]=1;
+  if(p.buildings[home]<0)p.buildings[home]=0;
  });
 
  /* Anciennes sauvegardes : on recrée deux calendriers indépendants. */
@@ -711,7 +783,7 @@ function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':
 function setChiefName(i){
   const p=state.players[i];
   if(!p)return;
-  const name=prompt('Nom du chef de '+p.name+':',p.chiefName||'');
+  const name=prompt('Nom du '+(isCowboy(p)?'Shérif':'chef')+' de '+p.name+':',p.chiefName||'');
   if(name===null)return;
   p.chiefName=name.trim().slice(0,40);
   log('👑 '+p.name+': chef nommé '+(p.chiefName||'sans nom'));
@@ -732,73 +804,75 @@ function render(){
  }
 
  document.getElementById('players').innerHTML=state.players.map((p,i)=>{
-  const req=requiredHouses(p);
-  const missing=Math.max(0,req-(p.buildings['Habitation']||0));
+  const missing=requiredHouses(p);
   const over=pop(p)>housingCapacity(p);
   const buildingsCount=totalBuildingCount(p);
   const maintenance=buildingMaintenance(p);
 
   return `<div class="card ${p.key}" style="${p.defeated?'opacity:.55':''}">
   <h2>${p.emoji} ${p.name} ${p.defeated?'— ÉLIMINÉE':''}</h2>
-  ${p.defeated?'<div class="win">☠️ Tribu éliminée : chef mort ou dernier foyer détruit.</div>':''}
+  ${p.defeated?`<div class="win">☠️ ${isCowboy(p)?'Équipe éliminée : Shérif mort ou dernier Centre ville détruit.':'Tribu éliminée : chef mort ou dernier Foyer détruit.'}</div>`:''}
 
   <div class="row"><span>🌽 Nourriture</span><span class="val">${p.food}</span></div>
   <div class="row"><span>🪵 Bois</span><span class="val">${p.wood}</span></div>
   <div class="row"><span>🪨 Pierre</span><span class="val">${p.stone}</span></div>
+  ${isCowboy(p)?`<div class="row"><span>⚙️ Métal</span><span class="val">${p.metal||0}</span></div>`:''}
   <div class="row"><span>🟡 Or</span><span class="badge gold">${p.gold}</span></div>
-  <div class="row"><span>Ressources totales</span><span class="badge">${p.food+p.wood+p.stone}</span></div>
+  <div class="row"><span>Ressources totales</span><span class="badge">${p.food+p.wood+p.stone+(isCowboy(p)?(p.metal||0):0)}</span></div>
 
   <section><b>👥 Population & unités</b>
-  <div class="row"><span>👑 Chef</span><span>${p.chiefName?escapeHtml(p.chiefName)+' — ':''}${p.chief}</span></div>
+  <div class="row"><span>${isCowboy(p)?'⭐ Shérif':'👑 Chef'}</span><span>${p.chiefName?escapeHtml(p.chiefName)+' — ':''}${p.chief}</span></div>
    <div class="row"><span class="mini">Nom du chef</span><button class="secondary chiefNameBtn" onclick="setChiefName(${i})">✏️ ${p.chiefName?'Modifier':'Définir'}</button></div>
-  <div class="row"><span>Villageois</span><span>${p.villagers}</span></div>
-  <div class="row"><span>Archers</span><span>${p.archers}${p.upgrades.archer?' 🏹✨':''}${p.upgrades.archerElite?' 🎯':''}</span></div>
-  <div class="row"><span>Cavaliers ×2</span><span>${p.cavalry}${p.upgrades.cavalry?' 🐎✨':''}${p.upgrades.cavalryArcher?' 🏹':''}</span></div>
-  <div class="row"><span>🛶 Canoës</span><span>${p.canoes}</span></div>
+  <div class="row"><span>${isCowboy(p)?'Colons':'Villageois'}</span><span>${p.villagers}</span></div>
+  <div class="row"><span>${isCowboy(p)?'🤠 Cowboys':'Archers'}</span><span>${p.archers}${p.upgrades.archer?(isCowboy(p)?' 🤠':' ✨'):''}${p.upgrades.archerElite?(isCowboy(p)?' 🤠💥':' 🎯'):''}</span></div>
+  <div class="row"><span>${isCowboy(p)?'🐎 Cowboys à cheval ×2':'Cavaliers ×2'}</span><span>${p.cavalry}${p.upgrades.cavalry?(isCowboy(p)?' 🐎':' 🐎✨'):''}${p.upgrades.cavalryArcher?(isCowboy(p)?' 🐎💥':' 🏹'):''}</span></div>
+  <div class="row"><span>${isCowboy(p)?'🛶 Barques':'🛶 Canoës'}</span><span>${p.canoes}</span></div>
   <div class="row"><b>Population effective</b><b>${pop(p)}</b></div>
   <div class="row"><span>🏠 Capacité de logement</span><b>${pop(p)} / ${housingCapacity(p)}</b></div>
   <div class="row"><span>🍽️ Entretien population / tour</span><b>${foodCost(p)} nourriture</b></div>
-  <div class="row"><span>🛶 Production des canoës</span><b>+${canoeIncome(p)} nourriture/tour</b></div>
+  <div class="row"><span>🛶 Production des ${isCowboy(p)?'barques':'canoës'}</span><b>+${canoeIncome(p)} nourriture/tour</b></div>
+  ${isCowboy(p)?`<div class="row"><span>⚙️ Entretien militaire / tour</span><b>${metalMaintenance(p)} métal</b></div>`:''}
 
-  ${missing>0?`<div class="alert">🏠 ${missing} habitation(s) obligatoire(s) pour cette population.</div>`:''}
+  ${missing>0?`<div class="alert">🏠 ${missing} ${housingName(p).toLowerCase()}(s) obligatoire(s) pour cette population.</div>`:''}
   ${over?`<div class="alert">⚠️ Population supérieure à la capacité de logement.</div>`:''}
 
   <div class="unitControls">
-   <button onclick="createUnit(${i},'villager')">+ Villageois<br><small>50 🌽</small></button>
-   <button onclick="createUnit(${i},'archer')">+ Archer<br><small>50 🌽 + 50 🪵</small></button>
-   <button onclick="createUnit(${i},'cavalry')">+ Cavalier<br><small>150 🌽 + 50 🪵</small></button>
-   <button onclick="createUnit(${i},'canoe')">+ Canoë<br><small>100 🪵</small></button>
+   <button onclick="createUnit(${i},'villager')">+ ${isCowboy(p)?'Colon':'Villageois'}<br><small>50 🌽</small></button>
+   <button onclick="createUnit(${i},'archer')">+ ${isCowboy(p)?'🤠 Cowboy':'Archer'}<br><small>${isCowboy(p)?'50 🌽 + 50 ⚙️':'50 🌽 + 50 🪵'}</small></button>
+   <button onclick="createUnit(${i},'cavalry')">+ ${isCowboy(p)?'🐎 Cowboy à cheval':'Cavalier'}<br><small>${isCowboy(p)?'150 🌽 + 50 ⚙️':'150 🌽 + 50 🪵'}</small></button>
+   <button onclick="createUnit(${i},'canoe')">+ ${isCowboy(p)?'Barque':'Canoë'}<br><small>100 🪵</small></button>
   </div>
-  <div class="mini">Le chef est unique et compte pour 1. Les canoës ne comptent pas dans la population et produisent 50 nourriture par tour.</div>
+  ${isCowboy(p)&&(p.buildings?.['Saloon']||0)>0&&p.saloonRecruitRound!==state.round?`<div class="controls" style="margin-top:7px"><button onclick="recruitSaloonCowboy(${i})">🍺 Recruter un Cowboy<br><small>50 🌽 · sans métal</small></button></div>`:''}
+  <div class="mini">${isCowboy(p)?'Le Shérif est unique et compte pour 1. Les barques ne comptent pas dans la population et produisent 50 nourriture par tour.':'Le chef est unique et compte pour 1. Les canoës ne comptent pas dans la population et produisent 50 nourriture par tour.'}</div>
 
   <div class="controls" style="margin-top:7px">
-   <button class="danger" onclick="killUnit(${i},'villager')">− Villageois</button>
-   <button class="danger" onclick="killUnit(${i},'archer')">− Archer</button>
-   <button class="danger" onclick="killUnit(${i},'cavalry')">− Cavalier</button>
-   <button class="danger" onclick="killUnit(${i},'canoe')">− Canoë</button>
-   <button class="danger" onclick="killUnit(${i},'chief')">☠️ Chef meurt</button>
+   <button class="danger" onclick="killUnit(${i},'villager')">− ${isCowboy(p)?'Colon':'Villageois'}</button>
+   <button class="danger" onclick="killUnit(${i},'archer')">− ${isCowboy(p)?'Cowboy':'Archer'}</button>
+   <button class="danger" onclick="killUnit(${i},'cavalry')">− ${isCowboy(p)?'Cowboy à cheval':'Cavalier'}</button>
+   <button class="danger" onclick="killUnit(${i},'canoe')">− ${isCowboy(p)?'Barque':'Canoë'}</button>
+   <button class="danger" onclick="killUnit(${i},'chief')">☠️ ${isCowboy(p)?'Shérif':'Chef'} meurt</button>
   </div>
   </section>
 
-  <section><b>⛏️ Villageois au travail</b>
-  ${[['workFood','🌽 Nourriture'],['workWood','🪵 Bois'],['workStone','🪨 Pierre']].map(([k,l])=>`
+  <section><b>⛏️ ${isCowboy(p)?'Colons':'Villageois'} au travail</b>
+  ${[...[['workFood','🌽 Nourriture'],['workWood','🪵 Bois'],['workStone','🪨 Pierre']],...(isCowboy(p)?[['workMetal','⚙️ Métal']]:[])].map(([k,l])=>`
   <div class="row"><span>${l}</span><span>
    <button class="secondary" onclick="adjust(${i},'${k}',-1)">−</button>
    <input value="${p[k]}" onchange="setVal(${i},'${k}',this.value)">
    <button onclick="adjust(${i},'${k}',1)">+</button>
    <span class="mini">(+${p[k]*50}/tour)</span>
   </span></div>`).join('')}
-  <div class="mini">Villageois affectés : ${totalWorkers(p)} / ${p.villagers}</div>
+  <div class="mini">${workerName(p)} affectés : ${totalWorkers(p)} / ${p.villagers}</div>
   </section>
 
   <section><b>🏗️ Construire</b>
   <div class="controls">
-   ${BUILDINGS.map((b,n)=>`
+   ${buildingList(p).map((b,n)=>`
     <button onclick="build(${i},${n})">${b[0]}<br><small>${b[1]} 🪵 + ${b[2]} 🪨</small></button>
    `).join('')}
   </div>
   <div class="mini">Bâtiments : ${Object.entries(p.buildings).map(([k,v])=>k+' ×'+v).join(', ')||'aucun'}</div>
-  <div class="mini">Entretien : ${buildingsCount} bâtiment(s) × 10 = <b>${maintenance} 🪵 / tour</b></div>
+  <div class="mini">Entretien : ${buildingsCount} bâtiment(s) × 10 = <b>${maintenance} 🪵 / tour</b>${isCowboy(p)?` · Entretien militaire : <b>${metalMaintenance(p)} ⚙️ / tour</b>`:''}</div>
   <div class="controls" style="margin-top:7px">
    ${Object.entries(p.buildings).filter(([,v])=>v>0).map(([k])=>`<button class="danger" onclick="destroyBuilding(${i},'${k}')">− Détruire ${k}</button>`).join('')}
   </div>
@@ -812,20 +886,20 @@ function render(){
   <section><b>⚔️ Améliorations militaires</b>
   <div class="controls">
    <button onclick="upgradeArcher(${i})" ${p.upgrades.archer?'disabled':''}>
-    ${p.upgrades.archer?'✅ Archers améliorés':'🏹 Améliorer archers'}<br>
+    ${p.upgrades.archer?`✅ ${isCowboy(p)?'Cowboys améliorés':'Archers améliorés'}`:`${isCowboy(p)?'🤠':'🏹'} Améliorer ${isCowboy(p)?'cowboys':'archers'}`}<br>
     <small>${p.upgrades.archer?'Déplacement : 2 tuiles':'100 🟡 → déplacement 2 tuiles'}</small>
    </button>
    <button onclick="upgradeCavalry(${i})" ${p.upgrades.cavalry?'disabled':''}>
-    ${p.upgrades.cavalry?'✅ Cavaliers améliorés':'🐎 Améliorer cavaliers'}<br>
+    ${p.upgrades.cavalry?`✅ ${isCowboy(p)?'Cowboys à cheval améliorés':'Cavaliers améliorés'}`:`🐎 Améliorer ${isCowboy(p)?'cowboys à cheval':'cavaliers'}`}<br>
     <small>${p.upgrades.cavalry?'Déplacement : 3 tuiles':'100 🟡 → déplacement 3 tuiles'}</small>
    </button>
    <button onclick="upgradeArcherElite(${i})" ${p.upgrades.archerElite?'disabled':''}>
-    ${p.upgrades.archerElite?'✅ Archers d’élite':'🎯 Archer d’élite'}<br>
+    ${p.upgrades.archerElite?`✅ ${isCowboy(p)?'Cowboy d’élite':'Archers d’élite'}`:`${isCowboy(p)?'🤠💥':'🎯'} ${isCowboy(p)?'Cowboy d’élite':'Archer d’élite'}`}<br>
     <small>${p.upgrades.archerElite?'Portée : 3 tuiles':'200 🟡 → portée 3 tuiles'}</small>
    </button>
    <button onclick="upgradeCavalryArcher(${i})" ${p.upgrades.cavalryArcher?'disabled':''}>
-    ${p.upgrades.cavalryArcher?'✅ Cavaliers archers':'🐎🏹 Cavalier archer'}<br>
-    <small>${p.upgrades.cavalryArcher?'Attaque : 2 tuiles':'200 🟡 → attaque 2 tuiles'}</small>
+    ${p.upgrades.cavalryArcher?`✅ ${isCowboy(p)?'Cowboy à cheval expérimenté':'Cavaliers archers'}`:`${isCowboy(p)?'🐎💥':'🐎🏹'} ${isCowboy(p)?'Cowboy à cheval expérimenté':'Cavalier archer'}`}<br>
+    <small>${p.upgrades.cavalryArcher?(isCowboy(p)?'Portée : 3 tuiles':'Attaque : 2 tuiles'):(isCowboy(p)?'200 🟡 → portée 3 tuiles':'200 🟡 → attaque 2 tuiles')}</small>
    </button>
   </div>
   </section>
@@ -902,7 +976,7 @@ signInAnonymously(auth).catch(e=>console.warn("Connexion Firebase anonyme indisp
 window.setChiefName=async function(i){
   const p=currentPlayers()[i];
   if(!p)return;
-  const name=prompt('Nom du chef de '+p.name+':',p.chiefName||'');
+  const name=prompt('Nom du '+(isCowboy(p)?'Shérif':'chef')+' de '+p.name+':',p.chiefName||'');
   if(name===null)return;
   const clean=name.trim().slice(0,40);
   if(!sharedMode){
@@ -958,8 +1032,10 @@ window.showSharedCreate=function(){
 window.sharedCount=function(n){
  pendingSharedCount=n;pendingSharedTribes=[];
  document.getElementById('sharedTribes').innerHTML=`
- <div>Choisissez les tribus :</div>
- <div class="choiceGrid">${TYPES.map(t=>`<button class="choice" id="st_${t.key}" onclick="toggleSharedTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('')}</div>
+ <div style="font-weight:800">🪶 Nations amérindiennes</div>
+ <div class="choiceGrid">${TYPES.filter(t=>t.faction==='indian').map(t=>`<button class="choice" id="st_${t.key}" onclick="toggleSharedTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('')}</div>
+ <div style="font-weight:800;margin-top:8px">🤠 Cow-boys</div>
+ <div class="choiceGrid">${TYPES.filter(t=>t.faction==='cowboy').map(t=>`<button class="choice" id="st_${t.key}" onclick="toggleSharedTribe('${t.key}')">${t.emoji} ${t.name}</button>`).join('')}</div>
  <button onclick="createSharedGame()" id="createSharedBtn" disabled>Créer la partie</button>`;
 };
 
@@ -1200,17 +1276,18 @@ function diffNotifications(before,after,round){
   const b=before.find(x=>x.key===p.key);
   if(!b)return;
   const add=(text,targetKey=p.key)=>out.push({id:Date.now().toString()+Math.random(),targetKey,message:text,round});
-  const units=[['villagers','villageois'],['archers','archer'],['cavalry','cavalier'],['canoes','canoë']];
-  units.forEach(([k,label])=>{
+  const units=[['villagers',p=>isCowboy(p)?'colon':'villageois'],['archers',p=>isCowboy(p)?'cowboy':'archer'],['cavalry',p=>isCowboy(p)?'cowboy à cheval':'cavalier'],['canoes',p=>isCowboy(p)?'barque':'canoë']];
+  units.forEach(([k,labelFn])=>{
+   const label=labelFn(p);
    const d=(p[k]||0)-(b[k]||0);
    if(d>0){
-    const pluralLabel=k==='villagers'?'villageois':label+(d>1?'s':'');
+    const pluralLabel=label+(d>1?'s':'');
     add(`+${d} ${pluralLabel} créé${d>1?'s':''}`);
    }
    if(d<0){
     let extra='';
     if(k==='villagers'){
-      const changes=[['workFood','nourriture'],['workWood','bois'],['workStone','pierre']].map(([wk,l])=>({wk,l,d:(p[wk]||0)-(b[wk]||0)})).filter(x=>x.d<0);
+      const changes=[['workFood','nourriture'],['workWood','bois'],['workStone','pierre'],...(isCowboy(p)?[['workMetal','métal']]:[])].map(([wk,l])=>({wk,l,d:(p[wk]||0)-(b[wk]||0)})).filter(x=>x.d<0);
       if(changes.length===1)extra=` — affectation : ${changes[0].l}`;
       else if(changes.length>1)extra=` — affectations modifiées`;
     }
@@ -1228,12 +1305,18 @@ function diffNotifications(before,after,round){
     const count=Math.abs(d);
     const info={
      'Écurie':['Une','Écuries','détruites'],
-     'Grand archer':['Un','Grands archers','détruits'],
+     'Cabane des archers':['Une','Cabanes des archers','détruites'],
      'Port':['Un','Ports','détruits'],
      'Pont':['Un','Ponts','détruits'],
      'Habitation':['Une','Habitations','détruites'],
      'Foyer':['Un','Foyers','détruits'],
-     'Totem':['Un','Totems','détruits']
+     'Totem':['Un','Totems','détruits'],
+     'Ranch':['Un','Ranchs','détruits'],
+     'Cabane de munitions':['Une','Cabanes de munitions','détruites'],
+     'Tente':['Une','Tentes','détruites'],
+     'Centre ville':['Un','Centres ville','détruits'],
+     'Mine':['Une','Mines','détruites'],
+     'Saloon':['Un','Saloons','détruits']
     }[k]||['Un',k+'s','détruits'];
     const text=count>1
      ? `💥 ${count} ${info[1]} ${p.name.toLowerCase()} ont été ${info[2]}.`
@@ -1241,17 +1324,18 @@ function diffNotifications(before,after,round){
     add(text,null);
    }
   });
-  if(!!p.upgrades?.archer&&!b.upgrades?.archer)add('🏹 Amélioration des archers : déplacement 2 tuiles');
-  if(!!p.upgrades?.cavalry&&!b.upgrades?.cavalry)add('🐎 Amélioration des cavaliers : déplacement 3 tuiles');
-  if(!!p.upgrades?.archerElite&&!b.upgrades?.archerElite)add('🎯 Archers d’élite : portée d’attaque 3 tuiles');
-  if(!!p.upgrades?.cavalryArcher&&!b.upgrades?.cavalryArcher)add('🐎🏹 Cavaliers archers : attaque à distance 2 tuiles');
-  if((p.workFood||0)!==(b.workFood||0))add(`🌽 ${p.workFood} villageois affectés à la nourriture`);
-  if((p.workWood||0)!==(b.workWood||0))add(`🪵 ${p.workWood} villageois affectés au bois`);
-  if((p.workStone||0)!==(b.workStone||0))add(`🪨 ${p.workStone} villageois affectés à la pierre`);
-  if((p.chief||0)<(b.chief||0))add('☠️ Le chef est mort');
+  if(!!p.upgrades?.archer&&!b.upgrades?.archer)add(`${isCowboy(p)?'🤠':'🏹'} Amélioration des ${isCowboy(p)?'cowboys':'archers'} : déplacement 2 tuiles`);
+  if(!!p.upgrades?.cavalry&&!b.upgrades?.cavalry)add(`🐎 Amélioration des ${isCowboy(p)?'cowboys à cheval':'cavaliers'} : déplacement 3 tuiles`);
+  if(!!p.upgrades?.archerElite&&!b.upgrades?.archerElite)add(`${isCowboy(p)?'🤠💥':'🎯'} ${isCowboy(p)?'Cowboys d’élite':'Archers d’élite'} : portée d’attaque 3 tuiles`);
+  if(!!p.upgrades?.cavalryArcher&&!b.upgrades?.cavalryArcher)add(`${isCowboy(p)?'🐎💥':'🐎🏹'} ${isCowboy(p)?'Cowboy à cheval expérimenté':'Cavaliers archers'} : portée d’attaque ${isCowboy(p)?'3':'2'} tuiles`);
+  if((p.workFood||0)!==(b.workFood||0))add(`🌽 ${p.workFood} ${workerName(p).toLowerCase()} affectés à la nourriture`);
+  if((p.workWood||0)!==(b.workWood||0))add(`🪵 ${p.workWood} ${workerName(p).toLowerCase()} affectés au bois`);
+  if((p.workStone||0)!==(b.workStone||0))add(`🪨 ${p.workStone} ${workerName(p).toLowerCase()} affectés à la pierre`);
+  if(isCowboy(p)&&(p.workMetal||0)!==(b.workMetal||0))add(`⚙️ ${p.workMetal||0} colons affectés au métal`);
+  if((p.chief||0)<(b.chief||0))add(`☠️ Le ${isCowboy(p)?'Shérif':'chef'} est mort`);
   if(!b.defeated&&p.defeated){
-     if((p.chief||0)<(b.chief||0)) add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre chef est mort.');
-     else if((p.buildings?.Foyer||0)<=0) add('☠️ VOTRE TRIBU EST ÉLIMINÉE — votre dernier Foyer a été détruit.');
+     if((p.chief||0)<(b.chief||0)) add(`☠️ VOTRE ${isCowboy(p)?'ÉQUIPE':'TRIBU'} EST ÉLIMINÉE — votre ${isCowboy(p)?'Shérif':'chef'} est mort.`);
+     else if((p.buildings?.[buildingHomeName(p)]||0)<=0) add(`☠️ VOTRE ${isCowboy(p)?'ÉQUIPE':'TRIBU'} EST ÉLIMINÉE — votre dernier ${buildingHomeName(p)} a été détruit.`);
      else add('☠️ VOTRE TRIBU EST ÉLIMINÉE.');
    }
  });
@@ -1284,16 +1368,17 @@ async function syncShared(before,afterState,gameId){
     const b=beforePlayers.find(x=>x.key===p.key);
     return b && (b.chief||0)>0 && (p.chief||0)<=0;
   });
-  const foyerDeath=s.players.some(p=>{
+  const homeDeath=s.players.some(p=>{
     const b=beforePlayers.find(x=>x.key===p.key);
-    return b && (b.buildings?.Foyer||0)>0 && (p.buildings?.Foyer||0)<=0;
+    const home=buildingHomeName(p);
+    return b && (b.buildings?.[home]||0)>0 && (p.buildings?.[home]||0)<=0;
   });
-  if((chiefDeath||foyerDeath) && beforeAlive.length>1 && afterAlive.length===1){
+  if((chiefDeath||homeDeath) && beforeAlive.length>1 && afterAlive.length===1){
     const winner=s.players.find(p=>p.key===afterAlive[0]&&!p.defeated);
     if(winner)notices.push({
       id:'victory-'+s.round+'-'+winner.key+'-'+Date.now(),
       targetKey:winner.key,
-      message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+(winner.chiefName?' — 👑 '+winner.chiefName:'')+' est le dernier chef encore en lice !',
+      message:'🏆 VICTOIRE ! '+winner.emoji+' '+winner.name+(winner.chiefName?' — 👑 '+winner.chiefName:'')+' est le dernier '+(isCowboy(winner)?'Shérif':'chef')+' encore en lice !',
       round:s.round
     });
   }
@@ -1396,7 +1481,7 @@ function wrapMutation(name){
   return result;
  };
 }
-['setVal','adjust','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher'].forEach(wrapMutation);
+['setVal','adjust','killUnit','build','destroyBuilding','convertStone','upgradeArcher','upgradeCavalry','upgradeArcherElite','upgradeCavalryArcher','recruitSaloonCowboy'].forEach(wrapMutation);
 
 // La mort des unités passe par une fenêtre de confirmation : la synchronisation
 // doit donc se faire au moment où la mort est réellement confirmée.
@@ -1470,7 +1555,7 @@ function renderOpponentSummary(playerKey){
  const players=currentPlayers();
  const opponents=players.filter(p=>p.key!==playerKey);
  if(!opponents.length)return '';
- return `<div class="opponentSummary"><b>👁️ Adversaires — en temps réel</b><table class="opponentTable"><thead><tr><th>Tribu</th><th>👥</th><th>🏹</th><th>🐎</th><th>🛶</th></tr></thead><tbody>${opponents.map(p=>`<tr><td>${escapeHtml(p.name||'')}</td><td>${p.villagers||0}</td><td>${p.archers||0}</td><td>${p.cavalry||0}</td><td>${p.canoes||0}</td></tr>`).join('')}</tbody></table></div>`;
+ return `<div class="opponentSummary"><b>👁️ Adversaires — en temps réel</b><table class="opponentTable"><thead><tr><th>Équipe</th><th>👥</th><th>🤠</th><th>🐎</th><th>🛶</th></tr></thead><tbody>${opponents.map(p=>`<tr><td>${escapeHtml(p.name||'')}</td><td>${p.villagers||0}</td><td>${p.archers||0}</td><td>${p.cavalry||0}</td><td>${p.canoes||0}</td></tr>`).join('')}</tbody></table></div>`;
 }
 window.render=function(){
  originalRender();
