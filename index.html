@@ -1559,6 +1559,11 @@ function renderOpponentSummary(playerKey){
 }
 window.render=function(){
  originalRender();
+ // Sauvegarde automatique de la partie classique après chaque modification.
+ // En partie partagée, Firebase reste la source de vérité.
+ if(!sharedMode){
+  try{localStorage.setItem('wakamSave',JSON.stringify(window.wakamState));}catch(e){}
+ }
  const s=window.wakamState;
  if(sharedMode){
   document.getElementById('sharedStatus').innerHTML=`🌐 Partie <b>${sharedGameId}</b> · ${sharedMaster?'<span class="role master">👑 Maître du jeu</span>':'<span class="role">👤 Joueur</span>'}`;
