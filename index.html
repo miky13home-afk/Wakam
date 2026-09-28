@@ -433,6 +433,10 @@ function createUnit(i,type){
   alert('Chaque camp commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');
   return;
  }
+ if(type==='villager' && (p.villagers||0)>=30){
+  alert(`Limite atteinte : maximum 30 ${isCowboy(p)?'colons':'villageois'}.`);
+  return;
+ }
  const requiredBuilding=requiredBuildingForUnit(p,type);
  if(requiredBuilding && (p.buildings?.[requiredBuilding]||0)<=0){
   alert(`Impossible de créer cette unité sans ${requiredBuilding.toLowerCase()}.`);
@@ -500,6 +504,11 @@ function confirmCreateUnit(i,type,quantity){
  const before=JSON.parse(JSON.stringify(state.players));
  const p=state.players[i];
  if(!p||!Number.isInteger(quantity)||quantity<1)return;
+ if(type==='villager' && (p.villagers||0)+quantity>30){
+  alert(`Limite atteinte : maximum 30 ${isCowboy(p)?'colons':'villageois'}.`);
+  closeCreateQuantityModal();
+  return;
+ }
  const requiredBuilding=requiredBuildingForUnit(p,type);
  if(requiredBuilding && (p.buildings?.[requiredBuilding]||0)<=0){
   alert(`Impossible de créer cette unité sans ${requiredBuilding.toLowerCase()}.`);
