@@ -174,7 +174,7 @@ function unitLabel(p,type,plural=false){
  const l=labels[type]||type;
  return plural?(l==='cowboy à cheval'||l==='villageois'||l==='cavalier'||l==='canoë'||l==='barque'||l==='colon'?l+'s':l+'s'):l;
 }
-function unitPop(p,type){return type==='canoe'?0:1;}
+function unitPop(p,type){return type==='cavalry'?2:(type==='canoe'?0:1);}
 function militaryCount(p){return isCowboy(p)?(p.archers||0)+(p.cavalry||0):0;}
 function metalMaintenance(p){if(!isCowboy(p))return 0;const n=militaryCount(p);if(n<=5)return 0;if(n<=10)return 50;if(n<=15)return 100;return 150;}
 function unitCostsFor(p,type){
@@ -264,12 +264,37 @@ function totalWorkers(p){
  return p.workFood+p.workWood+p.workStone+(isCowboy(p)?p.workMetal:0);
 }
 
+function requiredBuildingForUnit(p,type){
+ if(type==='archer')return isCowboy(p)?'Cabane de munitions':'Cabane des archers';
+ if(type==='cavalry')return isCowboy(p)?'Ranch':'Écurie';
+ if(type==='canoe')return 'Port';
+ return null;
+}
+
 function totalBuildingCount(p){
  return Object.values(p.buildings||{}).reduce((sum,v)=>sum+(Number(v)||0),0);
 }
 
 function buildingMaintenance(p){
- return Math.floor(totalBuildingCount(p)/3)*50;
+ const n=totalBuildingCount(p);
+ return n<=3?0:Math.floor((n-1)/3)*50;
+}
+function indianWoodMilitaryMaintenance(p){
+ if(isCowboy(p))return 0;
+ const n=(p.archers||0)+(p.cavalry||0);
+ if(n<=5)return 0;
+ if(n<=10)return 50;
+ if(n<=15)return 100;
+ return 150;
+}
+function militaryMaintenanceResource(p){
+ return isCowboy(p)?'metal':'wood';
+}
+function militaryMaintenance(p){
+ return isCowboy(p)?metalMaintenance(p):indianWoodMilitaryMaintenance(p);
+}
+function totalTurnMaintenance(p){
+ return {wood:buildingMaintenance(p)+(isCowboy(p)?0:indianWoodMilitaryMaintenance(p)),metal:isCowboy(p)?metalMaintenance(p):0};
 }
 
 function activePlayers(){
@@ -333,7 +358,13 @@ function adjust(i,key,d){
   alert('Tous les villageois disponibles sont déjà affectés à un travail.');
   return;
  }
- p[key]=Math.max(0,p[key]+d);
+ if(['workFood','workWood','workStone','workMetal'].includes(key)){
+  const other=totalWorkers(p)-(p[key]||0);
+  const maxForThis=Math.max(0,p.villagers-other);
+  p[key]=Math.max(0,Math.min(maxForThis,(p[key]||0)+d));
+ }else{
+  p[key]=Math.max(0,p[key]+d);
+ }
  render();
 }
 
@@ -364,10 +395,12 @@ function confirmDeathModal(){
   const available=work==='workFood'?p.workFood:work==='workWood'?p.workWood:work==='workStone'?p.workStone:work==='workMetal'?(p.workMetal||0):p.villagers-totalWorkers(p);
   if(n>available){alert(`Il n'y a que ${Math.max(0,available)} villageois dans cette affectation.`);return;}
   p.villagers-=n; if(work!=='none')p[work]-=n;
+  log(`☠️ ${p.emoji} ${p.name}: ${n} ${unitLabel(p,'villager',n>1)} tué${n>1?'s':''}.`);
  }else{
   const key=st.type==='archer'?'archers':st.type==='cavalry'?'cavalry':st.type==='canoe'?'canoes':'chief';
   p[key]=Math.max(0,(p[key]||0)-n);
   if(st.type==='chief') eliminatePlayer(p,isCowboy(p)?'le Shérif est mort':'le chef est mort');
+  else log(`☠️ ${p.emoji} ${p.name}: ${n} ${unitLabel(p,st.type,n>1)} tué${n>1?'s':''}.`);
  }
  closeDeathModal();
  checkVictory(); render();
@@ -375,13 +408,19 @@ function confirmDeathModal(){
 function killVillager(i){openDeathModal(i,'villager');}
 
 function maxMilitaryCreationByMaintenance(p,type,cost,maxQty){
- if(!isCowboy(p)||type==='villager'||type==='canoe')return maxQty;
+ if(type!=='archer' && type!=='cavalry') return maxQty;
+ const resource=militaryMaintenanceResource(p);
+ const available=resource==='metal'?(p.metal||0):(p.wood||0);
  let allowed=0;
  for(let q=1;q<=maxQty;q++){
-  const futureMilitary=militaryCount(p)+q;
-  const futureMaintenance=metalMaintenance({...p,archers:(p.archers||0)+(type==='archer'?q:0),cavalry:(p.cavalry||0)+(type==='cavalry'?q:0)});
-  const metalAfterPurchase=(p.metal||0)-(cost.metal||0)*q;
-  if(metalAfterPurchase<futureMaintenance)break;
+  const afterUnitCost=available-(resource==='metal'?cost.metal*q:cost.wood*q);
+  const future={...p,archers:(p.archers||0)+(type==='archer'?q:0),cavalry:(p.cavalry||0)+(type==='cavalry'?q:0)};
+  const futureMaintenance=militaryMaintenance(future);
+  const futureBuildingMaintenance=buildingMaintenance(future);
+  const requiredNextTurn=resource==='metal'
+   ? futureMaintenance
+   : futureMaintenance+futureBuildingMaintenance;
+  if(afterUnitCost<requiredNextTurn)break;
   allowed=q;
  }
  return allowed;
@@ -394,22 +433,25 @@ function createUnit(i,type){
   alert('Chaque camp commence avec un seul chef. Un deuxième chef ne peut pas être recruté.');
   return;
  }
+ const requiredBuilding=requiredBuildingForUnit(p,type);
+ if(requiredBuilding && (p.buildings?.[requiredBuilding]||0)<=0){
+  alert(`Impossible de créer cette unité sans ${requiredBuilding.toLowerCase()}.`);
+  return;
+ }
  const cost=unitCostsFor(p,type);
  const unitPop=unitPopForCreation(p,type);
  const availableHousing=unitPop===0?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
  const maxByFood=cost.food>0?Math.floor(p.food/cost.food):Infinity;
  const maxByWood=cost.wood>0?Math.floor(p.wood/cost.wood):Infinity;
  const maxByMetal=cost.metal>0?Math.floor((p.metal||0)/cost.metal):Infinity;
- const maxByPopulation=type==='villager'?Math.max(0,30-(p.villagers||0)):Infinity;
- const maxByMilitary=type==='archer'||type==='cavalry'?Math.max(0,20-militaryCount(p)):Infinity;
- let maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal,maxByPopulation,maxByMilitary);
+ let maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal);
  maxAffordable=maxMilitaryCreationByMaintenance(p,type,cost,maxAffordable);
  if(maxAffordable<=0){
-  if(type==='villager'&&(p.villagers||0)>=30)alert(`Limite atteinte : maximum 30 ${workerName(p).toLowerCase()}.`);
-  else if((type==='archer'||type==='cavalry')&&militaryCount(p)>=20)alert('Limite atteinte : maximum 20 unités militaires.');
-  else if(unitPop>0&&availableHousing<=0)alert(`Capacité de logement insuffisante. Construisez une ${housingName(p).toLowerCase()} supplémentaire.`);
-  else if(isCowboy(p)&&(type==='archer'||type==='cavalry'))alert('Métal insuffisant pour assurer l’entretien militaire après cette création.');
-  else alert('Ressources insuffisantes.');
+  if(unitPop>0&&availableHousing<=0)alert(`Capacité de logement insuffisante. Construisez une ${housingName(p).toLowerCase()} supplémentaire.`);
+  else if(type==='archer'||type==='cavalry'){
+   const r=militaryMaintenanceResource(p);
+   alert(`${r==='metal'?'Métal':'Bois'} insuffisant pour assurer l’entretien militaire après cette création.`);
+  }else alert('Ressources insuffisantes.');
   return;
  }
  openCreateQuantityModal(i,type,maxAffordable);
@@ -419,13 +461,12 @@ function createUnit(i,type){
 function recruitSaloonCowboy(i){
  const p=state.players[i];
  if(!p||!isCowboy(p))return;
- if((p.archers||0)+(p.cavalry||0)>=20){alert('Limite atteinte : maximum 20 unités militaires.');return;}
  if((p.buildings?.['Saloon']||0)<=0){alert('Construisez un Saloon pour recruter un Cowboy.');return;}
  if(p.saloonRecruitRound===state.round){alert('Le Saloon a déjà recruté un Cowboy ce tour.');return;}
  if(pop(p)>=housingCapacity(p)){alert('Capacité de logement insuffisante.');return;}
  if(p.food<50){alert('Ressources insuffisantes : il faut 50 nourriture.');return;}
  const futureMaintenance=metalMaintenance({...p,archers:(p.archers||0)+1});
- if((p.metal||0)<futureMaintenance){alert(`Métal insuffisant pour assurer l’entretien militaire après ce recrutement (${futureMaintenance} ⚙️ requis).`);return;}
+ if((p.metal||0)<futureMaintenance){alert(`Métal insuffisant pour assurer l’entretien militaire après ce recrutement. Il faut conserver ${futureMaintenance} métal pour le prochain tour.`);return;}
  p.food-=50;
  p.archers=(p.archers||0)+1;
  p.saloonRecruitRound=state.round;
@@ -459,22 +500,21 @@ function confirmCreateUnit(i,type,quantity){
  const before=JSON.parse(JSON.stringify(state.players));
  const p=state.players[i];
  if(!p||!Number.isInteger(quantity)||quantity<1)return;
+ const requiredBuilding=requiredBuildingForUnit(p,type);
+ if(requiredBuilding && (p.buildings?.[requiredBuilding]||0)<=0){
+  alert(`Impossible de créer cette unité sans ${requiredBuilding.toLowerCase()}.`);
+  closeCreateQuantityModal();
+  return;
+ }
  const cost=unitCostsFor(p,type);
  const unitPop=unitPopForCreation(p,type);
  const availableHousing=unitPop===0?Infinity:Math.max(0,Math.floor((housingCapacity(p)-pop(p))/unitPop));
  const maxByFood=cost.food>0?Math.floor(p.food/cost.food):Infinity;
  const maxByWood=cost.wood>0?Math.floor(p.wood/cost.wood):Infinity;
  const maxByMetal=cost.metal>0?Math.floor((p.metal||0)/cost.metal):Infinity;
- const maxByPopulation=type==='villager'?Math.max(0,30-(p.villagers||0)):Infinity;
- const maxByMilitary=type==='archer'||type==='cavalry'?Math.max(0,20-militaryCount(p)):Infinity;
- let maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal,maxByPopulation,maxByMilitary);
+ let maxAffordable=Math.min(10,availableHousing,maxByFood,maxByWood,maxByMetal);
  maxAffordable=maxMilitaryCreationByMaintenance(p,type,cost,maxAffordable);
- if(quantity>maxAffordable){
-  if(type==='villager'&&(p.villagers||0)>=30)alert(`Limite atteinte : maximum 30 ${workerName(p).toLowerCase()}.`);
-  else if((type==='archer'||type==='cavalry')&&militaryCount(p)>=20)alert('Limite atteinte : maximum 20 unités militaires.');
-  else alert('Cette quantité n’est plus disponible ou ne permet pas d’assurer l’entretien militaire.');
-  closeCreateQuantityModal();return;
- }
+ if(quantity>maxAffordable){alert('Cette quantité n’est plus disponible ou ne permet pas d’assurer l’entretien militaire.');closeCreateQuantityModal();return;}
  p.food-=cost.food*quantity;
  p.wood-=cost.wood*quantity;
  p.metal=(p.metal||0)-cost.metal*quantity;
@@ -513,6 +553,8 @@ function eliminatePlayer(p,reason){
  log('☠️ '+p.name+': '+reason+'. Tribu éliminée.');
  render();
  checkVictory();
+ // Laisser le rendu se terminer avant d'afficher l'écran de victoire.
+ setTimeout(()=>checkVictory(),0);
 }
 
 function build(i,n){
@@ -622,36 +664,67 @@ function triggerExhaustion(type){
 }
 
 function applyTurnProduction(){
+ if(state._productionAppliedRound===state.round)return;
+ state._productionAppliedRound=state.round;
+
  state.players.forEach(p=>{
   if(p.defeated)return;
 
-  const pf=p.workFood*50;
-  const pw=p.workWood*50;
-  const ps=p.workStone*50;
-  const pm=isCowboy(p)?(p.workMetal||0)*50:0;
+  const wf=Math.max(0,Math.min(30,Math.floor(p.workFood||0)));
+  const ww=Math.max(0,Math.min(30,Math.floor(p.workWood||0)));
+  const ws=Math.max(0,Math.min(30,Math.floor(p.workStone||0)));
+  let wm=isCowboy(p)?Math.max(0,Math.min(30,Math.floor(p.workMetal||0))):0;
+  wm=Math.min(wm,Math.max(0,(p.villagers||0)-wf-ww-ws));
+  p.workMetal=wm;
+
+  const pf=wf*50;
+  const pw=ww*50;
+  const ps=ws*50;
+  const actualMetalWorkers=wm;
+  const pm=actualMetalWorkers*50;
   const pc=canoeIncome(p);
 
   p.food+=pf+pc;
   p.wood+=pw;
   p.stone+=ps;
-  if(isCowboy(p))p.metal=(p.metal||0)+pm;
 
   const maintenance=buildingMaintenance(p);
-  const paidWood=Math.min(p.wood,maintenance);
+  const militaryWood=indianWoodMilitaryMaintenance(p);
+  const totalWoodMaintenance=maintenance+militaryWood;
+  const paidWood=Math.min(p.wood,totalWoodMaintenance);
   p.wood-=paidWood;
+  const paidBuildingWood=Math.min(paidWood,maintenance);
+  const paidMilitaryWood=Math.max(0,paidWood-paidBuildingWood);
 
-  if(paidWood<maintenance){
-   log(`⚠️ ${p.emoji} ${p.name}: manque ${maintenance-paidWood} bois pour l'entretien des bâtiments (${maintenance} 🪵 requis).`);
+  if(paidBuildingWood<maintenance){
+   log(`⚠️ ${p.emoji} ${p.name}: manque ${maintenance-paidBuildingWood} bois pour l'entretien des bâtiments (${maintenance} 🪵 requis).`);
   }else if(maintenance>0){
    log(`${p.emoji} ${p.name}: -${maintenance} 🪵 d'entretien des bâtiments.`);
   }
 
+  if(!isCowboy(p)){
+   p.militaryMaintenanceUnpaid=paidMilitaryWood<militaryWood;
+   if(paidMilitaryWood<militaryWood){
+    const warning=`⚠️ ${p.emoji} ${p.name}: manque ${militaryWood-paidMilitaryWood} bois pour l'entretien militaire (${militaryWood} 🪵 requis). Aucune attaque ne peut être effectuée tant que l'entretien n'est pas assuré.`;
+    log(warning);
+    setTimeout(()=>showEphemeral(warning,5000),0);
+   }else if(militaryWood>0){
+    log(`${p.emoji} ${p.name}: -${militaryWood} 🪵 d'entretien militaire.`);
+   }
+  }
+
   const militaryMetal=metalMaintenance(p);
-  const paidMetal=Math.min(p.metal||0,militaryMetal);
-  if(isCowboy){
-   p.metal=(p.metal||0)-paidMetal;
+  const metalBefore=p.metal||0;
+  const metalProduced=isCowboy(p)?pm:0;
+  const metalAvailable=metalBefore+metalProduced;
+  const paidMetal=Math.min(metalAvailable,militaryMetal);
+  if(isCowboy(p)){
+   p.metal=Math.max(0,metalAvailable-paidMetal);
+   p.militaryMaintenanceUnpaid=paidMetal<militaryMetal;
    if(paidMetal<militaryMetal){
-    log(`⚠️ ${p.emoji} ${p.name}: manque ${militaryMetal-paidMetal} métal pour l'entretien militaire (${militaryMetal} ⚙️ requis).`);
+    const warning=`⚠️ ${p.emoji} ${p.name}: manque ${militaryMetal-paidMetal} métal pour l'entretien militaire (${militaryMetal} ⚙️ requis). Aucune attaque ne peut être effectuée tant que l'entretien n'est pas assuré.`;
+    log(warning);
+    setTimeout(()=>showEphemeral(warning,5000),0);
    }else if(militaryMetal>0){
     log(`${p.emoji} ${p.name}: -${militaryMetal} ⚙️ d'entretien militaire.`);
    }
@@ -789,6 +862,17 @@ function normalizeLoadedState(){
   if(typeof p.workWood!=='number')p.workWood=0;
   if(typeof p.workStone!=='number')p.workStone=0;
   if(typeof p.workMetal!=='number')p.workMetal=0;
+  p.workFood=Math.max(0,Math.min(30,Math.floor(p.workFood)));
+  p.workWood=Math.max(0,Math.min(30,Math.floor(p.workWood)));
+  p.workStone=Math.max(0,Math.min(30,Math.floor(p.workStone)));
+  p.workMetal=Math.max(0,Math.min(30,Math.floor(p.workMetal)));
+  const workerTotal=totalWorkers(p);
+  if(workerTotal>p.villagers){
+   let excess=workerTotal-p.villagers;
+   const keys=isCowboy(p)?['workMetal','workStone','workWood','workFood']:['workStone','workWood','workFood'];
+   keys.forEach(k=>{const cut=Math.min(excess,p[k]||0);p[k]-=cut;excess-=cut;});
+  }
+  if(typeof p.militaryMaintenanceUnpaid!=='boolean')p.militaryMaintenanceUnpaid=false;
   if(!p.buildings)p.buildings={[buildingHomeName(p)]:1};
   const home=buildingHomeName(p);
   if(typeof p.buildings[home]!=='number')p.buildings[home]=1;
@@ -855,7 +939,7 @@ function render(){
    <div class="row"><span class="mini">Nom du chef</span><button class="secondary chiefNameBtn" onclick="setChiefName(${i})">✏️ ${p.chiefName?'Modifier':'Définir'}</button></div>
   <div class="row"><span>${isCowboy(p)?'Colons':'Villageois'}</span><span>${p.villagers}</span></div>
   <div class="row"><span>${isCowboy(p)?'🤠 Cowboys':'Archers'}</span><span>${p.archers}${p.upgrades.archer?(isCowboy(p)?' 🤠':' ✨'):''}${p.upgrades.archerElite?(isCowboy(p)?' 🤠💥':' 🎯'):''}</span></div>
-  <div class="row"><span>${isCowboy(p)?'🐎 Cowboys à cheval':'Cavaliers'}</span><span>${p.cavalry}${p.upgrades.cavalry?(isCowboy(p)?' 🐎':' 🐎✨'):''}${p.upgrades.cavalryArcher?(isCowboy(p)?' 🐎💥':' 🏹'):''}</span></div>
+  <div class="row"><span>${isCowboy(p)?'🐎 Cowboys à cheval ×2':'Cavaliers ×2'}</span><span>${p.cavalry}${p.upgrades.cavalry?(isCowboy(p)?' 🐎':' 🐎✨'):''}${p.upgrades.cavalryArcher?(isCowboy(p)?' 🐎💥':' 🏹'):''}</span></div>
   <div class="row"><span>${isCowboy(p)?'🛶 Barques':'🛶 Canoës'}</span><span>${p.canoes}</span></div>
   <div class="row"><b>Population effective</b><b>${pop(p)}</b></div>
   <div class="row"><span>🏠 Capacité de logement</span><b>${pop(p)} / ${housingCapacity(p)}</b></div>
@@ -902,7 +986,7 @@ function render(){
    `).join('')}
   </div>
   <div class="mini">Bâtiments : ${Object.entries(p.buildings).map(([k,v])=>k+' ×'+v).join(', ')||'aucun'}</div>
-  <div class="mini">Entretien : ${buildingsCount} bâtiment(s) → <b>${Math.floor(buildingsCount/3)} tranche(s) de 3 = ${maintenance} 🪵 / tour</b>${isCowboy(p)?` · Entretien militaire : <b>${metalMaintenance(p)} ⚙️ / tour</b>`:''}</div>
+  <div class="mini">Entretien bâtiments : <b>${maintenance} 🪵 / tour</b>${isCowboy(p)?` · Entretien militaire : <b>${metalMaintenance(p)} ⚙️ / tour</b>`:` · Entretien militaire : <b>${indianWoodMilitaryMaintenance(p)} 🪵 / tour</b>`}</div>
   <div class="controls" style="margin-top:7px">
    ${Object.entries(p.buildings).filter(([,v])=>v>0).map(([k])=>`<button class="danger" onclick="destroyBuilding(${i},'${k}')">− Détruire ${k}</button>`).join('')}
   </div>
@@ -1307,6 +1391,10 @@ function diffNotifications(before,after,round){
   if(!b)return;
   const add=(text,targetKey=p.key)=>out.push({id:Date.now().toString()+Math.random(),targetKey,message:text,round});
   const units=[['villagers',p=>isCowboy(p)?'colon':'villageois'],['archers',p=>isCowboy(p)?'cowboy':'archer'],['cavalry',p=>isCowboy(p)?'cowboy à cheval':'cavalier'],['canoes',p=>isCowboy(p)?'barque':'canoë']];
+  const totalDeaths=units.reduce((sum,[k])=>sum+Math.max(0,(b[k]||0)-(p[k]||0)),0);
+  if(totalDeaths>=5){
+   add(`🩸 MASSACRE ! ${totalDeaths} unités ${p.name} ont été tuées.` ,null);
+  }
   units.forEach(([k,labelFn])=>{
    const label=labelFn(p);
    const d=(p[k]||0)-(b[k]||0);
@@ -1528,6 +1616,8 @@ window.confirmDeathModal=async function(){
    showEphemeral(n.message);
   });
   await enqueueSharedSync(before,after);
+ }else{
+  diffNotifications(before,currentPlayers(),state.round).forEach(n=>showEphemeral(n.message));
  }
  return result;
 };
